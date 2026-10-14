@@ -8,7 +8,11 @@ Native iPadOS LiDAR capture and scan-to-BIM foundation for **3117 BIM Management
 
 3117 LiDAR SCAN will help field engineers turn existing-building captures into measured, reviewed, editable BIM elements for renovation, as-built documentation, and construction verification. Users must be able to trace each generated element back to its source scan and measurements. Human review and correction are required between detection and BIM generation. See the staged deliverables and acceptance gates in [the roadmap](docs/development-roadmap.md).
 
-This is the product direction, not a claim of implemented end-to-end functionality. Point-cloud fusion, element detection, and Revit generation remain to be built. Xcode compilation and physical-device acceptance remain unverified.
+This is the product direction, not a claim of implemented end-to-end functionality. Point-cloud fusion, element detection, and Revit generation remain to be built. Xcode compilation passed on GitHub Actions; physical-device acceptance remains unverified.
+
+## Verified build
+
+On 2026-10-14, commit `549c1cb2b8cba8fd0aa2a36397182aee7c6951a3` passed five geometry/export/measurement tests and both Simulator Debug and unsigned iPad Release builds using Xcode 16.4. [Build evidence](https://github.com/wirarua-stack/3117-LiDAR-SCAN/actions/runs/38499242569). This does not establish successful app launch, signing, TestFlight distribution, or LiDAR capture on a physical device.
 
 The source includes `ARMeshAnchor` capture, live mesh visualization, named local archives, saved-model viewing with orbit/zoom and surface measurement, and OBJ export through the iPad share sheet. Save/load failures are reported instead of silently dismissed. Deleted projects leave geometry files in Application Support for recovery.
 

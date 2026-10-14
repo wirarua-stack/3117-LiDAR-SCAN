@@ -20,6 +20,6 @@ After compile verification, configure the owner's Apple Developer Program member
 
 ## Current evidence
 
-Prepared locally on Windows on 2026-10-14. No Git remote was configured and no macOS runner was connected, so no workflow run or successful Xcode compile is claimed.
+The private repository is now connected at `https://github.com/wirarua-stack/3117-LiDAR-SCAN`. On 2026-10-14, [run 38499242569](https://github.com/wirarua-stack/3117-LiDAR-SCAN/actions/runs/38499242569) succeeded for commit `549c1cb2b8cba8fd0aa2a36397182aee7c6951a3`, using Xcode 16.4 and the iOS 18.5 SDK. All five package tests passed, as did Simulator Debug and unsigned iPad Release compilation. Diagnostic artifact: `build-logs-38499242569-1` (14-day retention). No signing or physical-device test was performed.
 
 References: [GitHub-hosted runners](https://docs.github.com/en/actions/reference/runners/github-hosted-runners), [workflow artifacts](https://docs.github.com/en/actions/tutorials/store-and-share-data).

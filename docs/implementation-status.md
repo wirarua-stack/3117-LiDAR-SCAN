@@ -6,7 +6,7 @@ Source corrections include reading three Float components from ARKit vertex buff
 
 Automated tests added for archive round-trip, malformed geometry rejection, and OBJ world coordinates/index offsets. These fixtures are synthetic test geometry, never sensor output. Run `swift test` on macOS with Xcode tools. The package isolates geometry/export/measurement code from the iOS application target.
 
-Environment limitation: no Swift compiler, Xcode or physical iPad is available in the Windows workspace. Tests and app compilation have not been executed here. Source/path/XML checks do not establish build success.
+Environment: the Windows workspace still has no local Swift compiler or Xcode. Remote verification is now complete: [GitHub Actions run 38499242569](https://github.com/wirarua-stack/3117-LiDAR-SCAN/actions/runs/38499242569) passed on 2026-10-14 for commit `549c1cb2b8cba8fd0aa2a36397182aee7c6951a3`, using Xcode 16.4. Five unit tests passed with zero failures; Simulator Debug and unsigned iPad Release builds succeeded. App launch, signing, TestFlight and physical LiDAR capture remain unverified.
 
 Next device validation: open the Xcode project, select signing team, build, scan a measured object, save, reopen, measure two visible surfaces, export/share OBJ and re-import in an independent viewer. Test denied camera access, interrupted sessions and failed storage writes. Compare measurements to an independent reference and record error.
 
