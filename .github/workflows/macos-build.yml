@@ -1,0 +1,65 @@
+name: macOS compile and tests
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: macos-build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    runs-on: macos-15
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Record toolchain
+        run: |
+          mkdir -p build-logs
+          xcodebuild -version | tee build-logs/toolchain.txt
+          swift --version | tee -a build-logs/toolchain.txt
+          sw_vers | tee -a build-logs/toolchain.txt
+      - name: Validate project metadata
+        run: |
+          plutil -lint ios/App/Info.plist
+          plutil -lint ios/3117LiDARScan.xcodeproj/project.pbxproj
+          xcodebuild -list -project ios/3117LiDARScan.xcodeproj
+      - name: Geometry and export unit tests
+        run: |
+          set -o pipefail
+          swift test 2>&1 | tee build-logs/unit-tests.log
+      - name: Compile iPad Simulator application
+        run: |
+          set -o pipefail
+          xcodebuild build \
+            -project ios/3117LiDARScan.xcodeproj \
+            -scheme LiDARScan \
+            -configuration Debug \
+            -destination 'generic/platform=iOS Simulator' \
+            -derivedDataPath build/simulator \
+            CODE_SIGNING_ALLOWED=NO 2>&1 | tee build-logs/simulator.log
+      - name: Compile iPad device application without signing
+        run: |
+          set -o pipefail
+          xcodebuild build \
+            -project ios/3117LiDARScan.xcodeproj \
+            -scheme LiDARScan \
+            -configuration Release \
+            -destination 'generic/platform=iOS' \
+            -derivedDataPath build/device \
+            CODE_SIGNING_ALLOWED=NO 2>&1 | tee build-logs/device.log
+      - name: Retain diagnostic logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-logs-${{ github.run_id }}-${{ github.run_attempt }}
+          path: build-logs/
+          retention-days: 14
+          if-no-files-found: warn
