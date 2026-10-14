@@ -8,6 +8,7 @@ final class ScanCoordinator: NSObject, ObservableObject, ARSessionDelegate {
     @Published var status = "Preparing LiDAR"
     @Published var isSupported = ARWorldTrackingConfiguration.supportsSceneReconstruction(.mesh)
     @Published private(set) var meshCount = 0
+    @Published private(set) var trackingStatus = "Waiting for tracking"
     @Published private(set) var measurementText = "Aim the center reticle, then mark two points."
     let arView = ARView(frame: .zero)
     private var samples: [UUID: MeshSample] = [:]
@@ -74,6 +75,22 @@ final class ScanCoordinator: NSObject, ObservableObject, ARSessionDelegate {
     }
     nonisolated func sessionWasInterrupted(_ session: ARSession) {
         Task { @MainActor in status = "Capture interrupted. Return and resume." }
+    }
+    nonisolated func session(_ session: ARSession, cameraDidChangeTrackingState camera: ARCamera) {
+        let text: String
+        switch camera.trackingState {
+        case .normal: text = "Tracking normal"
+        case .notAvailable: text = "Tracking unavailable"
+        case .limited(let reason):
+            switch reason {
+            case .initializing: text = "Initializing — move slowly"
+            case .excessiveMotion: text = "Slow down to restore tracking"
+            case .insufficientFeatures: text = "Aim at a surface with more visual detail"
+            case .relocalizing: text = "Return to a previously scanned area"
+            @unknown default: text = "Tracking limited"
+            }
+        }
+        Task { @MainActor in trackingStatus = text }
     }
     nonisolated private func ingest(_ anchors: [ARAnchor]) {
         let meshAnchors = anchors.compactMap { $0 as? ARMeshAnchor }

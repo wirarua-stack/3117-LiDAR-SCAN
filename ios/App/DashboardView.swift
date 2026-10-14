@@ -4,6 +4,8 @@ import SceneKit
 struct DashboardView: View {
     @EnvironmentObject private var library: ProjectLibrary
     @State private var showingCapture = false
+    @State private var renaming: ScanProject?
+    @State private var projectName = ""
 
     var body: some View {
         NavigationSplitView {
@@ -17,6 +19,13 @@ struct DashboardView: View {
                                     .font(.caption).foregroundStyle(.secondary)
                             }
                         }
+                        .contextMenu {
+                            Button("Rename", systemImage: "pencil") { projectName = project.name; renaming = project }
+                            Button("Duplicate", systemImage: "doc.on.doc") {
+                                do { try library.duplicate(project.id) }
+                                catch { library.errorMessage = error.localizedDescription }
+                            }
+                        }
                     }
                     .onDelete(perform: library.delete)
                 }
@@ -27,6 +36,22 @@ struct DashboardView: View {
             ContentUnavailableView("Select a project or start a scan", systemImage: "cube.transparent")
         }
         .sheet(isPresented: $showingCapture) { CaptureScreen() }
+        .sheet(item: $renaming) { project in
+            NavigationStack {
+                Form { TextField("Project name", text: $projectName) }
+                    .navigationTitle("Rename project")
+                    .toolbar {
+                        ToolbarItem(placement: .cancellationAction) { Button("Cancel") { renaming = nil } }
+                        ToolbarItem(placement: .confirmationAction) {
+                            Button("Save") {
+                                do { try library.rename(project.id, to: projectName) }
+                                catch { library.errorMessage = error.localizedDescription }
+                                renaming = nil
+                            }.disabled(projectName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                        }
+                    }
+            }.presentationDetents([.medium])
+        }
         .tint(.orange)
         .preferredColorScheme(.dark)
         .alert("Project library", isPresented: Binding(get: { library.errorMessage != nil }, set: { if !$0 { library.errorMessage = nil } })) {
@@ -57,7 +82,7 @@ private struct SavedModelView: View {
                 if let exportURL { ShareLink("Share OBJ", item: exportURL) }
             }.padding()
         }
-        .navigationTitle(project.name)
+        .navigationTitle(library.projects.first(where: { $0.id == project.id })?.name ?? project.name)
         .task(id: project.id) {
             do { scene = try buildScene(library.load(project)) }
             catch { errorMessage = error.localizedDescription }

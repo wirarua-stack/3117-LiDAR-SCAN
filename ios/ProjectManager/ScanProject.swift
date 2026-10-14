@@ -1,10 +1,12 @@
 import Foundation
+#if canImport(UIKit)
 import UIKit
+#endif
 
 struct ScanProject: Codable, Identifiable, Hashable {
     let id: UUID
     var name: String
-    let capturedAt: Date
+    var capturedAt: Date
     var deviceModel: String
     var scanType: String
     var coordinateReference: String
@@ -20,4 +22,12 @@ struct ScanProject: Codable, Identifiable, Hashable {
 
 struct ExportRecord: Codable, Hashable { let format: String; let date: Date; let fileName: String }
 
-enum DeviceInfo { static var modelIdentifier: String { UIDevice.current.model } }
+enum DeviceInfo {
+    static var modelIdentifier: String {
+        #if canImport(UIKit)
+        return UIDevice.current.model
+        #else
+        return "Non-capture test host"
+        #endif
+    }
+}

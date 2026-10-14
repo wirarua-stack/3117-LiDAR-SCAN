@@ -16,6 +16,7 @@ struct CaptureScreen: View {
                 VStack(spacing: 12) {
                     Text(scan.status).padding(10).background(.black.opacity(0.72), in: Capsule()).foregroundStyle(.white)
                     Text("Mesh anchors: \(scan.meshCount)").font(.caption).foregroundStyle(.white)
+                    Text(scan.trackingStatus).font(.caption).foregroundStyle(.white)
                     TextField("Project name", text: $name).textFieldStyle(.roundedBorder).frame(maxWidth: 350)
                     Text(scan.measurementText).font(.caption).foregroundStyle(.white)
                     HStack { Button("Mark point") { scan.markMeasurementPoint() }; Button("Pause") { scan.pause() }; Button("Resume") { scan.resume() }; Button("Save scan") { finish() }.buttonStyle(.borderedProminent).disabled(scan.meshCount == 0) }
