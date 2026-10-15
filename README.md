@@ -2,6 +2,12 @@
 
 Native iPadOS LiDAR capture and scan-to-BIM foundation for **3117 BIM Management Co., Ltd.**
 
+## Open source
+
+This project is released under the [MIT license](LICENSE). See the [contribution guide](CONTRIBUTING.md) to report issues or contribute improvements. The license permits commercial reuse and modification, with preservation of its copyright and permission notices. Company names and logos do not imply endorsement of forks.
+
+Apple SDKs and any future third-party integrations retain their own terms; they are not relicensed by this project. Open-source availability does not remove Apple signing, hardware or App Store distribution requirements. This repository is an early development project, not a production-ready or survey-validated release. Read [security reporting guidance](SECURITY.md) before reporting sensitive issues.
+
 ## Long-term product objective
 
 **Scan → Point Cloud → Measurement → Building-element detection → Revit BIM Model**
