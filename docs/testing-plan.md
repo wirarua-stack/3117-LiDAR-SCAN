@@ -9,7 +9,10 @@
 - During save/load/export/duplicate, check that the operation indicator animates, conflicting library edits are disabled, and errors restore controls. Test storage failure and retry; never report save success until metadata is committed.
 - Close the capture screen while the camera permission prompt is outstanding; granting permission afterward must not start a hidden capture.
 - Profile memory and UI latency on the oldest supported iPad. The budget limits retained application geometry, not total ARKit/GPU allocations. JSON/export still materialize complete files, and SceneKit scene construction still runs on the main actor.
-- Unsaved captures currently have no crash/termination recovery. A pause retains geometry only while the process is alive. Do not use for irreplaceable site captures before checkpoint recovery is implemented and tested.
+- Wait for the recovery timestamp, terminate the app through development tools, relaunch and recover the draft. Verify name, original capture date, local coordinates and geometry. Recovery creates a saved model, not a resumed AR session.
+- Repeat termination during a subsequent checkpoint: expect either the previous complete snapshot or the new complete snapshot, never a partially decoded model. Repeat before the first checkpoint and acknowledge that there is nothing to recover.
+- Save normally: no draft should remain. Simulate termination after project commit but before draft cleanup: recovery must not duplicate or overwrite the committed project. Explicit discard must remove only that capture's draft.
+- Test corrupt draft data, wrong UUID/version, full disk, file-write failure and background suspension. Errors must retain the draft and restore controls. An inactive/background checkpoint is best effort, not a guarantee.
 
 ## Automated
 

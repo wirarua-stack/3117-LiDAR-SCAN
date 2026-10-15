@@ -33,6 +33,7 @@ The source includes `ARMeshAnchor` capture, live mesh visualization, named local
 - OBJ export for captured triangles
 - ASCII PLY/XYZ export of reconstructed mesh vertices in metres (local Y-up frame, not raw LiDAR or fused depth)
 - Export-format history, project rename/duplicate, and unsaved-scan discard confirmation
+- Periodic atomic recovery drafts and recovery into saved models after relaunch (last completed checkpoint only; not live AR session continuation)
 
 ## Build on macOS
 
