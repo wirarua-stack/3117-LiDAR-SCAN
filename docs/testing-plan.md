@@ -1,5 +1,16 @@
 # Testing plan
 
+## Stability acceptance (physical device required)
+
+- Capture, switch to another app, return: capture must remain paused until Resume; old geometry must remain available to save. Check alignment after relocalization against a reference object; do not accept shifted/duplicated geometry.
+- Trigger a session interruption and a session error separately. Interruption allows manual resume; a failed session must require saving and starting a new capture rather than mixing coordinate frames.
+- Exercise serious/critical thermal notification and memory-warning handling using development diagnostics; do not deliberately overheat hardware. Thermal pause must refuse Resume until temperature recovers. Memory pressure must require save/new scan.
+- Use a reduced CaptureBudget in a development build to reach vertex, triangle and anchor limits. The last accepted geometry must remain intact, and queued callbacks must not mutate it after pause/save.
+- During save/load/export/duplicate, check that the operation indicator animates, conflicting library edits are disabled, and errors restore controls. Test storage failure and retry; never report save success until metadata is committed.
+- Close the capture screen while the camera permission prompt is outstanding; granting permission afterward must not start a hidden capture.
+- Profile memory and UI latency on the oldest supported iPad. The budget limits retained application geometry, not total ARKit/GPU allocations. JSON/export still materialize complete files, and SceneKit scene construction still runs on the main actor.
+- Unsaved captures currently have no crash/termination recovery. A pause retains geometry only while the process is alive. Do not use for irreplaceable site captures before checkpoint recovery is implemented and tested.
+
 ## Automated
 
 - Unit-test distance formatting and numeric calculations.
