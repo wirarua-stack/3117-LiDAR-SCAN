@@ -31,6 +31,8 @@ The source includes `ARMeshAnchor` capture, live mesh visualization, named local
 - Local JSON project metadata and raw mesh archive persistence
 - Point-to-point measurement (metres and millimetres)
 - OBJ export for captured triangles
+- ASCII PLY/XYZ export of reconstructed mesh vertices in metres (local Y-up frame, not raw LiDAR or fused depth)
+- Export-format history, project rename/duplicate, and unsaved-scan discard confirmation
 
 ## Build on macOS
 
