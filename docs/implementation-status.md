@@ -1,4 +1,8 @@
-# Implementation status — 2026-10-14
+# Implementation status — 2026-10-15
+
+New source update: export selector supports OBJ mesh and ASCII PLY/XYZ point clouds derived from reconstructed mesh vertices. Coordinates are transformed into the local capture frame in metres (Y up), not georeferenced. Vertices are not deduplicated or uniformly sampled and contain no RGB, intensity or raw depth. PLY embeds this provenance in its header; XYZ is numeric XYZ rows only. This is not raw LiDAR capture or point-cloud fusion. Export history retains the selected format. The viewer resets stale geometry, share URLs and measurement state when switching projects. Unsaved scans require discard confirmation, including protection against swipe dismissal.
+
+New tests cover PLY headers/counts/world transforms, numeric XYZ rows, empty PLY, corrupt geometry rejection and persistent export history for all formats. Remote verification of this update is pending; hardware testing remains required.
 
 Implemented in source: camera permission and device gate; ARKit mesh capture and removal updates; centered capture reticle; named scan saving with error reporting; archive validation; saved SceneKit model viewer with camera gestures and two-tap distance measurement; OBJ export and sharing with export history.
 

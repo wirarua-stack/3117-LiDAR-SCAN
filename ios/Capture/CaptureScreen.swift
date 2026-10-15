@@ -7,6 +7,7 @@ struct CaptureScreen: View {
     @StateObject private var scan = ScanCoordinator()
     @State private var name = "Untitled Scan"
     @State private var errorMessage: String?
+    @State private var confirmingDiscard = false
 
     var body: some View {
         NavigationStack {
@@ -23,7 +24,17 @@ struct CaptureScreen: View {
                 }.padding()
             }
             .navigationTitle("Live LiDAR Capture").navigationBarTitleDisplayMode(.inline)
-            .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } } }
+            .toolbar { ToolbarItem(placement: .cancellationAction) {
+                Button("Cancel") {
+                    if scan.meshCount > 0 { confirmingDiscard = true }
+                    else { dismiss() }
+                }
+            } }
+            .interactiveDismissDisabled(scan.meshCount > 0)
+            .confirmationDialog("Discard this unsaved scan?", isPresented: $confirmingDiscard, titleVisibility: .visible) {
+                Button("Discard scan", role: .destructive) { dismiss() }
+                Button("Keep scanning", role: .cancel) { }
+            }
             .onAppear { scan.requestCameraAndStart() }
             .onDisappear { scan.pause() }
             .alert("Cannot save scan", isPresented: Binding(get: { errorMessage != nil }, set: { if !$0 { errorMessage = nil } })) {

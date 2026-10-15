@@ -70,16 +70,17 @@ final class ProjectLibrary: ObservableObject {
             try commit(updated)
         } catch { errorMessage = error.localizedDescription }
     }
-    func export(_ project: ScanProject) throws -> URL {
+    func export(_ project: ScanProject, format: ScanExportFormat = .obj) throws -> URL {
+        guard projects.contains(where: { $0.id == project.id }) else { throw LibraryError.missingProject }
         let samples = try load(project)
         let folder = fileURL.deletingLastPathComponent().appendingPathComponent("Exports", isDirectory: true)
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
-        let name = "\(project.id.uuidString)-\(UUID().uuidString).obj"
+        let name = "\(project.id.uuidString)-\(UUID().uuidString).\(format.fileExtension)"
         let url = folder.appendingPathComponent(name)
-        try OBJExporter.data(from: samples).write(to: url, options: .atomic)
+        try PointCloudExporter.data(from: samples, format: format).write(to: url, options: .atomic)
         var updated = projects
         if let index = updated.firstIndex(where: { $0.id == project.id }) {
-            updated[index].exportHistory.append(ExportRecord(format: "OBJ", date: .now, fileName: name))
+            updated[index].exportHistory.append(ExportRecord(format: format.rawValue, date: .now, fileName: name))
             try commit(updated)
         }
         return url

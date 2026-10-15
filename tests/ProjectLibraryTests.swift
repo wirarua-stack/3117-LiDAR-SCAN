@@ -4,6 +4,25 @@ import simd
 
 final class ProjectLibraryTests: XCTestCase {
     @MainActor
+    func testAllExportFormatsPersistHistoryAndFiles() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let library = ProjectLibrary(directory: directory)
+        let mesh = MeshSample(vertices: [.init(SIMD3<Float>(0, 0, 0)), .init(SIMD3<Float>(1, 0, 0)), .init(SIMD3<Float>(0, 1, 0))], triangles: [.init(a: 0, b: 1, c: 2)], transform: Matrix4x4(matrix_identity_float4x4))
+        try library.save(name: "Export fixture", samples: [mesh])
+        let project = try XCTUnwrap(library.projects.first)
+        for format in ScanExportFormat.allCases {
+            let url = try library.export(project, format: format)
+            XCTAssertEqual(url.pathExtension, format.fileExtension)
+            XCTAssertFalse(try Data(contentsOf: url).isEmpty)
+        }
+        let reopened = ProjectLibrary(directory: directory)
+        XCTAssertEqual(reopened.projects.first?.exportHistory.map(\.format), ["OBJ", "PLY", "XYZ"])
+        library.delete(at: IndexSet(integer: 0))
+        XCTAssertThrowsError(try library.export(project))
+    }
+
+    @MainActor
     func testRenameDuplicateAndReopenPreserveCapture() throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: directory) }

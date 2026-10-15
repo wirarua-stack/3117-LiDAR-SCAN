@@ -66,6 +66,8 @@ private struct SavedModelView: View {
     @State private var scene: SCNScene?
     @State private var errorMessage: String?
     @State private var exportURL: URL?
+    @State private var exportFormat: ScanExportFormat = .obj
+    @State private var modelSummary = ""
     @State private var measurement = "Tap two surfaces to measure. Drag to orbit; pinch to zoom."
 
     var body: some View {
@@ -73,18 +75,33 @@ private struct SavedModelView: View {
             if let scene { MeshSceneView(scene: scene, measurement: $measurement) }
             else { ContentUnavailableView("Model unavailable", systemImage: "cube") }
             Text(measurement).padding()
+            Text(modelSummary).font(.caption).foregroundStyle(.secondary)
             Text("Estimated surface distance • validate against site references").font(.caption).foregroundStyle(.secondary)
+            Picker("Export format", selection: $exportFormat) {
+                ForEach(ScanExportFormat.allCases) { format in Text(format.label).tag(format) }
+            }
+            Text("Metres • local Y-up coordinates • PLY/XYZ use mesh vertices, not raw LiDAR").font(.caption).foregroundStyle(.secondary)
             HStack {
-                Button("Export OBJ") {
-                    do { exportURL = try library.export(project) }
+                Button("Export \(exportFormat.rawValue)") {
+                    exportURL = nil
+                    do { exportURL = try library.export(project, format: exportFormat) }
                     catch { errorMessage = error.localizedDescription }
                 }.disabled(scene == nil)
-                if let exportURL { ShareLink("Share OBJ", item: exportURL) }
+                if let exportURL { ShareLink("Share \(exportURL.pathExtension.uppercased())", item: exportURL) }
             }.padding()
         }
         .navigationTitle(library.projects.first(where: { $0.id == project.id })?.name ?? project.name)
         .task(id: project.id) {
-            do { scene = try buildScene(library.load(project)) }
+            scene = nil
+            exportURL = nil
+            errorMessage = nil
+            modelSummary = ""
+            measurement = "Tap two surfaces to measure. Drag to orbit; pinch to zoom."
+            do {
+                let samples = try library.load(project)
+                scene = try buildScene(samples)
+                modelSummary = "\(samples.reduce(0) { $0 + $1.vertices.count }) vertices • \(samples.reduce(0) { $0 + $1.triangles.count }) triangles"
+            }
             catch { errorMessage = error.localizedDescription }
         }
         .alert("Model operation failed", isPresented: Binding(get: { errorMessage != nil }, set: { if !$0 { errorMessage = nil } })) {
