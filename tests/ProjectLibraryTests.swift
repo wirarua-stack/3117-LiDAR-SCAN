@@ -4,6 +4,37 @@ import simd
 
 final class ProjectLibraryTests: XCTestCase {
     @MainActor
+    func testSavedMeasurementsPersistDuplicateAndExport() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let library = ProjectLibrary(directory: directory)
+        let mesh = MeshSample(vertices: [.init(SIMD3<Float>(0, 0, 0)), .init(SIMD3<Float>(1, 0, 0)), .init(SIMD3<Float>(0, 1, 0))], triangles: [.init(a: 0, b: 1, c: 2)], transform: Matrix4x4(matrix_identity_float4x4))
+        try library.save(name: "Measured", samples: [mesh])
+        let project = try XCTUnwrap(library.projects.first)
+        let item = try SavedMeasurement(name: "Wall", a: .zero, b: .init(3, 4, 0))
+        try library.addMeasurement(item, to: project.id)
+        try library.addMeasurement(item, to: project.id)
+        let reopened = ProjectLibrary(directory: directory)
+        XCTAssertEqual(reopened.projects.first?.savedMeasurements, [item])
+        try await reopened.duplicateInBackground(project.id)
+        XCTAssertEqual(reopened.projects.first?.savedMeasurements, [item])
+        XCTAssertNotEqual(reopened.projects.first?.id, project.id)
+        let url = try await reopened.exportMeasurements(project.id)
+        XCTAssertEqual(url.pathExtension, "csv")
+        XCTAssertTrue(String(decoding: try Data(contentsOf: url), as: UTF8.self).contains("Wall"))
+        XCTAssertEqual(ProjectLibrary(directory: directory).projects.last?.exportHistory.last?.format, "Measurement CSV")
+        XCTAssertThrowsError(try library.addMeasurement(item, to: UUID()))
+    }
+
+    func testProjectsWithoutMeasurementsRemainReadable() throws {
+        let project = ScanProject(name: "Legacy")
+        var object = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(project)) as? [String: Any])
+        object.removeValue(forKey: "savedMeasurements")
+        let decoded = try JSONDecoder().decode(ScanProject.self, from: JSONSerialization.data(withJSONObject: object))
+        XCTAssertEqual(decoded.id, project.id)
+        XCTAssertNil(decoded.savedMeasurements)
+    }
+    @MainActor
     func testCheckpointReopenRecoverAndDiscard() async throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: directory) }

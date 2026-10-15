@@ -104,22 +104,32 @@ private struct SavedModelView: View {
     @State private var measuring = false
     @State private var clearMeasurement = UUID()
     @State private var loadingStage = "Loading model…"
+    @State private var selectedPoints: [SIMD3<Float>] = []
+    @State private var measurementName = ""
+    @State private var namingMeasurement = false
+    @State private var showingMeasurements = false
     @State private var measurement = "Tap two surfaces to measure. Drag to orbit; pinch to zoom."
 
     var body: some View {
         VStack {
-            if let scene { MeshSceneView(scene: scene, measuring: measuring, resetID: clearMeasurement, measurement: $measurement) }
+            if let scene { MeshSceneView(scene: scene, measuring: measuring, resetID: clearMeasurement, measurement: $measurement, selectedPoints: $selectedPoints) }
             else if loading { ProgressView(loadingStage) }
             else { ContentUnavailableView("Model unavailable", systemImage: "cube") }
             HStack {
                 Toggle("Measure surfaces", isOn: $measuring)
                 Button("Clear measurement") {
                     clearMeasurement = UUID()
+                    selectedPoints = []
                     measurement = "Measurement cleared. Select two surfaces."
                 }
             }.padding(.horizontal).disabled(scene == nil)
             Text(measurement).padding()
-            Text("A = cyan • B = green • straight-line distance • temporary, not saved").font(.caption).foregroundStyle(.secondary)
+            Text("A = cyan • B = green • straight-line distance • use Save measurement to retain points").font(.caption).foregroundStyle(.secondary)
+            HStack {
+                Button("Save measurement") { measurementName = ""; namingMeasurement = true }
+                    .disabled(selectedPoints.count != 2 || library.isBusy)
+                Button("Saved measurements") { showingMeasurements = true }.disabled(library.isBusy)
+            }
             Text(modelSummary).font(.caption).foregroundStyle(.secondary)
             if let operation = library.operation { ProgressView(operation) }
             Text("Estimated surface distance • validate against site references").font(.caption).foregroundStyle(.secondary)
@@ -149,6 +159,9 @@ private struct SavedModelView: View {
             loadingStage = "Loading model…"
             measuring = false
             clearMeasurement = UUID()
+            selectedPoints = []
+            showingMeasurements = false
+            namingMeasurement = false
             scene = nil
             exportURL = nil
             errorMessage = nil
@@ -173,6 +186,26 @@ private struct SavedModelView: View {
             if !Task.isCancelled { loading = false }
         }
         .onDisappear { activeProjectID = nil }
+        .alert("Name measurement", isPresented: $namingMeasurement) {
+            TextField("e.g. Wall width", text: $measurementName)
+            Button("Save") {
+                guard selectedPoints.count == 2 else { return }
+                do {
+                    let record = try SavedMeasurement(name: measurementName, a: selectedPoints[0], b: selectedPoints[1])
+                    try library.addMeasurement(record, to: project.id)
+                    measurement = "Saved: \(record.name) — \(Measurement.display(record.distanceMetres))"
+                } catch { errorMessage = error.localizedDescription }
+            }
+            Button("Cancel", role: .cancel) { }
+        }
+        .sheet(isPresented: $showingMeasurements) {
+            MeasurementListView(projectID: project.id) { record in
+                selectedPoints = [record.a.simd, record.b.simd]
+                measuring = false
+                measurement = "\(record.name): " + Measurement.display(record.distanceMetres)
+                showingMeasurements = false
+            }
+        }
         .alert("Model operation failed", isPresented: Binding(get: { errorMessage != nil }, set: { if !$0 { errorMessage = nil } })) {
             Button("OK") { errorMessage = nil }
         } message: { Text(errorMessage ?? "") }
@@ -201,12 +234,61 @@ private struct SavedModelView: View {
     }
 }
 
+private struct MeasurementListView: View {
+    let projectID: UUID
+    let show: (SavedMeasurement) -> Void
+    @EnvironmentObject private var library: ProjectLibrary
+    @Environment(\.dismiss) private var dismiss
+    @State private var reportURL: URL?
+    @State private var errorMessage: String?
+    private var records: [SavedMeasurement] {
+        library.projects.first(where: { $0.id == projectID })?.savedMeasurements ?? []
+    }
+    var body: some View {
+        NavigationStack {
+            List {
+                Section {
+                    Text("Local capture coordinates in metres. Straight-line mesh measurements; verify against site references.").font(.caption)
+                    if records.isEmpty { Text("No saved measurements. Select two surfaces, then save with a name.") }
+                    ForEach(records) { record in
+                        Button { show(record) } label: {
+                            VStack(alignment: .leading) {
+                                Text(record.name)
+                                Text(Measurement.display(record.distanceMetres)).font(.headline)
+                                Text(record.createdAt.formatted()).font(.caption)
+                                Text("Tap to display endpoints on model").font(.caption)
+                            }
+                        }.disabled(library.isBusy)
+                    }
+                }
+                Section("Report") {
+                    Button("Export CSV") {
+                        reportURL = nil
+                        Task {
+                            do { reportURL = try await library.exportMeasurements(projectID) }
+                            catch { errorMessage = error.localizedDescription }
+                        }
+                    }.disabled(records.isEmpty || library.isBusy)
+                    if let reportURL { ShareLink("Share measurement CSV", item: reportURL) }
+                    if let operation = library.operation { ProgressView(operation) }
+                }
+            }
+            .navigationTitle("Saved measurements")
+            .toolbar { Button("Done") { dismiss() } }
+            .alert("Report failed", isPresented: Binding(get: { errorMessage != nil }, set: { if !$0 { errorMessage = nil } })) {
+                Button("OK") { errorMessage = nil }
+            } message: { Text(errorMessage ?? "") }
+        }
+    }
+}
+
 private struct MeshSceneView: UIViewRepresentable {
     let scene: SCNScene
     let measuring: Bool
     let resetID: UUID
     @Binding var measurement: String
-    func makeCoordinator() -> Coordinator { Coordinator(measurement: $measurement) }
+    @Binding var selectedPoints: [SIMD3<Float>]
+    func makeCoordinator() -> Coordinator { Coordinator(measurement: $measurement, selectedPoints: $selectedPoints) }
     func makeUIView(context: Context) -> SCNView {
         let view = SCNView()
         view.backgroundColor = UIColor(red: 0.03, green: 0.06, blue: 0.12, alpha: 1)
@@ -226,6 +308,11 @@ private struct MeshSceneView: UIViewRepresentable {
             coordinator.resetID = resetID
         }
         coordinator.measuring = measuring
+        if coordinator.selection.points != selectedPoints {
+            coordinator.clear()
+            for point in selectedPoints { coordinator.selection.select(point) }
+            coordinator.annotate(in: scene)
+        }
     }
     final class Coordinator: NSObject {
         var selection = MeasurementSelection()
@@ -233,13 +320,16 @@ private struct MeshSceneView: UIViewRepresentable {
         var resetID: UUID?
         private var annotations: [SCNNode] = []
         var measurement: Binding<String>
-        init(measurement: Binding<String>) { self.measurement = measurement }
+        var selectedPoints: Binding<[SIMD3<Float>]>
+        init(measurement: Binding<String>, selectedPoints: Binding<[SIMD3<Float>]>) {
+            self.measurement = measurement; self.selectedPoints = selectedPoints
+        }
         func clear() {
             selection.clear()
             annotations.forEach { $0.removeFromParentNode() }
             annotations.removeAll()
         }
-        private func annotate(in scene: SCNScene) {
+        func annotate(in scene: SCNScene) {
             annotations.forEach { $0.removeFromParentNode() }
             annotations.removeAll()
             for (index, point) in selection.points.enumerated() {
@@ -276,6 +366,7 @@ private struct MeshSceneView: UIViewRepresentable {
             let p = hit.worldCoordinates
             let point = SIMD3<Float>(p.x, p.y, p.z)
             guard selection.select(point) else { measurement.wrappedValue = "Invalid point. Try another surface."; return }
+            selectedPoints.wrappedValue = selection.points
             annotate(in: scene)
             if let distance = selection.distance {
                 measurement.wrappedValue = "A → B: " + Measurement.display(distance)

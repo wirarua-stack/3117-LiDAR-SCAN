@@ -57,7 +57,7 @@ struct PreparedMesh: Sendable {
     }
 }
 
-struct Vector3: Codable, Sendable {
+struct Vector3: Codable, Sendable, Hashable {
     var x: Float; var y: Float; var z: Float
     init(_ value: SIMD3<Float>) { x = value.x; y = value.y; z = value.z }
     var simd: SIMD3<Float> { SIMD3(x, y, z) }

@@ -12,6 +12,8 @@ struct ScanProject: Codable, Identifiable, Hashable, Sendable {
     var coordinateReference: String
     var meshFileName: String?
     var exportHistory: [ExportRecord]
+    // Optional for backward-compatible decoding of projects and recovery drafts created before measurements.
+    var savedMeasurements: [SavedMeasurement]?
 
     init(name: String, meshFileName: String? = nil) {
         id = UUID(); self.name = name; capturedAt = .now

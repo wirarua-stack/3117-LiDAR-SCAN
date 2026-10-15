@@ -59,6 +59,7 @@ final class ProjectLibrary: ObservableObject {
         copy.deviceModel = source.deviceModel
         copy.scanType = source.scanType
         copy.coordinateReference = source.coordinateReference
+        copy.savedMeasurements = source.savedMeasurements
         copy.meshFileName = "\(copy.id.uuidString).mesh.json"
         try JSONEncoder().encode(samples).write(to: fileURL.deletingLastPathComponent().appendingPathComponent(copy.meshFileName!), options: .atomic)
         try commit([copy] + projects)
@@ -212,6 +213,7 @@ final class ProjectLibrary: ObservableObject {
         var copy = ScanProject(name: source.name + " Copy")
         copy.capturedAt = source.capturedAt; copy.deviceModel = source.deviceModel
         copy.scanType = source.scanType; copy.coordinateReference = source.coordinateReference
+        copy.savedMeasurements = source.savedMeasurements
         copy.meshFileName = "\(copy.id.uuidString).mesh.json"
         let sourceURL = try archiveURL(source)
         let destination = try archiveURL(copy)
@@ -226,6 +228,39 @@ final class ProjectLibrary: ObservableObject {
         guard let name = project.meshFileName, !name.isEmpty,
               name == URL(fileURLWithPath: name).lastPathComponent else { throw CocoaError(.fileReadCorruptFile) }
         return fileURL.deletingLastPathComponent().appendingPathComponent(name)
+    }
+
+    func addMeasurement(_ item: SavedMeasurement, to projectID: UUID) throws {
+        guard !isBusy else { throw LibraryError.busy }
+        try item.validate()
+        var updated = projects
+        guard let index = updated.firstIndex(where: { $0.id == projectID }) else { throw LibraryError.missingProject }
+        var items = updated[index].savedMeasurements ?? []
+        guard !items.contains(where: { $0.id == item.id }) else { return }
+        items.append(item)
+        updated[index].savedMeasurements = items
+        try commit(updated)
+    }
+
+    func exportMeasurements(_ projectID: UUID) async throws -> URL {
+        guard !isBusy else { throw LibraryError.busy }
+        guard writable else { throw CocoaError(.fileWriteNoPermission) }
+        guard let project = projects.first(where: { $0.id == projectID }) else { throw LibraryError.missingProject }
+        operation = "Exporting measurement report…"
+        defer { operation = nil }
+        let folder = fileURL.deletingLastPathComponent().appendingPathComponent("Exports", isDirectory: true)
+        let name = "\(projectID.uuidString)-measurements-\(UUID().uuidString).csv"
+        let url = folder.appendingPathComponent(name)
+        try await Task.detached(priority: .userInitiated) {
+            let data = try MeasurementCSV.data(project: project)
+            try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+            try data.write(to: url, options: .atomic)
+        }.value
+        var updated = projects
+        guard let index = updated.firstIndex(where: { $0.id == projectID }) else { throw LibraryError.missingProject }
+        updated[index].exportHistory.append(ExportRecord(format: "Measurement CSV", date: .now, fileName: name))
+        try commit(updated)
+        return url
     }
 }
 
