@@ -1,5 +1,11 @@
 # 3117 LiDAR SCAN
 
+## Browser edition
+
+The new [browser workspace source](browser/README.md) opens imported scans without installing an app: OBJ, ASCII PLY, XYZ and 3117 mesh/project JSON; interactive 3D viewing, A/B measurements, IndexedDB project storage, JSON backup and CSV reports. Run `node serve.mjs` from `browser/` for local use. This is **not live LiDAR capture** and does not replace native ARKit acquisition. Safari/iPad WebXR depth support is absent in the [MDN compatibility data](https://github.com/mdn/browser-compat-data/blob/main/api/XRCPUDepthInformation.json). Scan data are processed locally, not uploaded by the application. Physical iPad/browser validation remains outstanding.
+
+`browser/` is the open-source snapshot of the separately managed Sites checkout (`web/`, ignored by this repository). Keep source changes synchronized before publishing. The hosted Site starts owner-private; an open-source repository does not automatically make the deployed Site public.
+
 Native iPadOS LiDAR capture and scan-to-BIM foundation for **3117 BIM Management Co., Ltd.**
 
 ## Open source

@@ -16,3 +16,4 @@ DerivedData/
 *.key
 *.cer
 *.xcarchive/
+web/
