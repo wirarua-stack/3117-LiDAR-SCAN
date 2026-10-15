@@ -1,5 +1,13 @@
 # Testing plan
 
+## Viewer and visible measurement acceptance
+
+- Open a large saved model and check that read/preparation/assembly stage labels appear. Navigate away while preparation or assembly is running: cancelled work must not replace the new project's scene or leave old measurement markers. Profile frame time and peak memory on physical iPad; preparation being off-main is not sufficient evidence of smooth GPU upload.
+- With Measure surfaces off, tap/drag/pinch: no endpoints should be created. Enable it and tap two mesh surfaces: cyan A, green B and a line should match the selected world positions. Orbit and zoom to inspect the endpoints from another angle.
+- Tap directly over an existing marker: selection must hit only the underlying mesh, not the annotation sphere/line. Tap empty background: retain the previous endpoints and show a no-surface message.
+- A third valid tap starts a new pair and removes the previous line. Clear removes both markers and the line. Changing projects must reset measurement mode and selection.
+- Compare a known reference length; distinguish straight-line distance from along-surface distance. The markers are visual aids, not survey accuracy guarantees. Closing the viewer discards annotations; geometry exports must not contain markers or measurement lines.
+
 ## Stability acceptance (physical device required)
 
 - Capture, switch to another app, return: capture must remain paused until Resume; old geometry must remain available to save. Check alignment after relocalization against a reference object; do not accept shifted/duplicated geometry.

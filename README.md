@@ -30,6 +30,8 @@ The source includes `ARMeshAnchor` capture, live mesh visualization, named local
 - Live mesh-anchor ingestion (no simulated scan data)
 - Local JSON project metadata and raw mesh archive persistence
 - Point-to-point measurement (metres and millimetres)
+- Saved-model measurement mode with visible A/B markers, connecting line and clear action (temporary annotations)
+- Cancellable background geometry preparation and staged model-loading feedback
 - OBJ export for captured triangles
 - ASCII PLY/XYZ export of reconstructed mesh vertices in metres (local Y-up frame, not raw LiDAR or fused depth)
 - Export-format history, project rename/duplicate, and unsaved-scan discard confirmation
