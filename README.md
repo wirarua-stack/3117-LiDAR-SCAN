@@ -24,6 +24,8 @@ This is the product direction, not a claim of implemented end-to-end functionali
 
 ## Verified build
 
+Latest depth/RGB source verification (2026-10-15): commit `8a07b5725a21c35478e02e47f502cedac091578c` passed unit tests, Simulator Debug and unsigned iPad Release compilation in [run 38682410041](https://github.com/wirarua-stack/3117-LiDAR-SCAN/actions/runs/38682410041). The native point-cloud feature still requires signing/install and physical iPad acceptance; compilation is not evidence of capture quality.
+
 On 2026-10-14, commit `549c1cb2b8cba8fd0aa2a36397182aee7c6951a3` passed five geometry/export/measurement tests and both Simulator Debug and unsigned iPad Release builds using Xcode 16.4. [Build evidence](https://github.com/wirarua-stack/3117-LiDAR-SCAN/actions/runs/38499242569). This does not establish successful app launch, signing, TestFlight distribution, or LiDAR capture on a physical device.
 
 The source includes `ARMeshAnchor` capture, live mesh visualization, named local archives, saved-model viewing with orbit/zoom and surface measurement, and OBJ export through the iPad share sheet. Save/load failures are reported instead of silently dismissed. Deleted projects leave geometry files in Application Support for recovery.
