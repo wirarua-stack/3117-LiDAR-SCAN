@@ -3,6 +3,14 @@ import simd
 @testable import LiDARScan
 
 final class MeshExportTests: XCTestCase {
+    func testCaptureBudgetBoundaries() {
+        let budget = CaptureBudget(maximumVertices: 3, maximumTriangles: 2, maximumAnchors: 1)
+        XCTAssertTrue(budget.allows(vertices: 3, triangles: 2, anchors: 1))
+        XCTAssertFalse(budget.allows(vertices: 4, triangles: 2, anchors: 1))
+        XCTAssertFalse(budget.allows(vertices: 3, triangles: 3, anchors: 1))
+        XCTAssertFalse(budget.allows(vertices: 3, triangles: 2, anchors: 2))
+        XCTAssertFalse(budget.allows(vertices: -1, triangles: 0, anchors: 0))
+    }
     private func triangle() -> MeshSample {
         MeshSample(vertices: [.init(SIMD3<Float>(0, 0, 0)), .init(SIMD3<Float>(1, 0, 0)), .init(SIMD3<Float>(0, 1, 0))],
                    triangles: [Triangle(a: 0, b: 1, c: 2)], transform: Matrix4x4(matrix_identity_float4x4))

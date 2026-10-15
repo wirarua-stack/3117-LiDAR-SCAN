@@ -5,6 +5,8 @@ import SwiftUI
 final class ProjectLibrary: ObservableObject {
     @Published private(set) var projects: [ScanProject] = []
     @Published var errorMessage: String?
+    @Published private(set) var operation: String?
+    var isBusy: Bool { operation != nil }
     private var writable = true
     private let fileURL: URL
 
@@ -25,6 +27,7 @@ final class ProjectLibrary: ObservableObject {
         projects = updated
     }
     func save(name: String, samples: [MeshSample]) throws {
+        guard !isBusy else { throw LibraryError.busy }
         guard writable else { throw CocoaError(.fileWriteNoPermission) }
         guard samples.contains(where: { !$0.triangles.isEmpty }) else { throw CocoaError(.fileReadCorruptFile) }
         try samples.forEach { try $0.validate() }
@@ -35,6 +38,7 @@ final class ProjectLibrary: ObservableObject {
         try commit([project] + projects)
     }
     func rename(_ id: UUID, to name: String) throws {
+        guard !isBusy else { throw LibraryError.busy }
         let cleaned = name.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !cleaned.isEmpty else { throw LibraryError.emptyName }
         var updated = projects
@@ -43,6 +47,7 @@ final class ProjectLibrary: ObservableObject {
         try commit(updated)
     }
     func duplicate(_ id: UUID) throws {
+        guard !isBusy else { throw LibraryError.busy }
         guard writable else { throw CocoaError(.fileWriteNoPermission) }
         guard let source = projects.first(where: { $0.id == id }) else { throw LibraryError.missingProject }
         let samples = try load(source)
@@ -64,6 +69,7 @@ final class ProjectLibrary: ObservableObject {
     }
     func delete(at offsets: IndexSet) {
         do {
+            guard !isBusy else { throw LibraryError.busy }
             var updated = projects
             updated.remove(atOffsets: offsets)
             // Retain geometry files for recovery.
@@ -71,6 +77,7 @@ final class ProjectLibrary: ObservableObject {
         } catch { errorMessage = error.localizedDescription }
     }
     func export(_ project: ScanProject, format: ScanExportFormat = .obj) throws -> URL {
+        guard !isBusy else { throw LibraryError.busy }
         guard projects.contains(where: { $0.id == project.id }) else { throw LibraryError.missingProject }
         let samples = try load(project)
         let folder = fileURL.deletingLastPathComponent().appendingPathComponent("Exports", isDirectory: true)
@@ -85,14 +92,95 @@ final class ProjectLibrary: ObservableObject {
         }
         return url
     }
+
+    func saveInBackground(name: String, samples: [MeshSample]) async throws {
+        guard !isBusy else { throw LibraryError.busy }
+        guard writable else { throw CocoaError(.fileWriteNoPermission) }
+        operation = "Saving scan…"
+        defer { operation = nil }
+        let cleaned = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        var project = ScanProject(name: cleaned.isEmpty ? "Untitled Scan" : cleaned)
+        project.meshFileName = "\(project.id.uuidString).mesh.json"
+        let url = fileURL.deletingLastPathComponent().appendingPathComponent(project.meshFileName!)
+        try await Task.detached(priority: .userInitiated) {
+            guard samples.contains(where: { !$0.triangles.isEmpty }) else { throw CocoaError(.fileReadCorruptFile) }
+            try samples.forEach { try $0.validate() }
+            try JSONEncoder().encode(samples).write(to: url, options: .atomic)
+        }.value
+        // Merge with current metadata only after the archive has been safely written.
+        try commit([project] + projects)
+    }
+
+    func loadInBackground(_ project: ScanProject) async throws -> [MeshSample] {
+        guard !isBusy else { throw LibraryError.busy }
+        operation = "Loading model…"
+        defer { operation = nil }
+        let url = try archiveURL(project)
+        return try await Task.detached(priority: .userInitiated) { try ArchiveIO.load(url) }.value
+    }
+
+    func exportInBackground(_ project: ScanProject, format: ScanExportFormat) async throws -> URL {
+        guard !isBusy else { throw LibraryError.busy }
+        guard writable, projects.contains(where: { $0.id == project.id }) else { throw LibraryError.missingProject }
+        operation = "Exporting \(format.rawValue)…"
+        defer { operation = nil }
+        let source = try archiveURL(project)
+        let folder = fileURL.deletingLastPathComponent().appendingPathComponent("Exports", isDirectory: true)
+        let name = "\(project.id.uuidString)-\(UUID().uuidString).\(format.fileExtension)"
+        let url = folder.appendingPathComponent(name)
+        try await Task.detached(priority: .userInitiated) {
+            let samples = try ArchiveIO.load(source)
+            try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+            try PointCloudExporter.data(from: samples, format: format).write(to: url, options: .atomic)
+        }.value
+        var updated = projects
+        guard let index = updated.firstIndex(where: { $0.id == project.id }) else { throw LibraryError.missingProject }
+        updated[index].exportHistory.append(ExportRecord(format: format.rawValue, date: .now, fileName: name))
+        try commit(updated)
+        return url
+    }
+
+    func duplicateInBackground(_ id: UUID) async throws {
+        guard !isBusy else { throw LibraryError.busy }
+        guard writable else { throw CocoaError(.fileWriteNoPermission) }
+        guard let source = projects.first(where: { $0.id == id }) else { throw LibraryError.missingProject }
+        operation = "Duplicating scan…"
+        defer { operation = nil }
+        var copy = ScanProject(name: source.name + " Copy")
+        copy.capturedAt = source.capturedAt; copy.deviceModel = source.deviceModel
+        copy.scanType = source.scanType; copy.coordinateReference = source.coordinateReference
+        copy.meshFileName = "\(copy.id.uuidString).mesh.json"
+        let sourceURL = try archiveURL(source)
+        let destination = try archiveURL(copy)
+        try await Task.detached(priority: .userInitiated) {
+            _ = try ArchiveIO.load(sourceURL)
+            try FileManager.default.copyItem(at: sourceURL, to: destination)
+        }.value
+        try commit([copy] + projects)
+    }
+
+    private func archiveURL(_ project: ScanProject) throws -> URL {
+        guard let name = project.meshFileName, !name.isEmpty,
+              name == URL(fileURLWithPath: name).lastPathComponent else { throw CocoaError(.fileReadCorruptFile) }
+        return fileURL.deletingLastPathComponent().appendingPathComponent(name)
+    }
+}
+
+private enum ArchiveIO {
+    static func load(_ url: URL) throws -> [MeshSample] {
+        let samples = try JSONDecoder().decode([MeshSample].self, from: Data(contentsOf: url))
+        try samples.forEach { try $0.validate() }
+        return samples
+    }
 }
 
 enum LibraryError: LocalizedError {
-    case emptyName, missingProject
+    case emptyName, missingProject, busy
     var errorDescription: String? {
         switch self {
         case .emptyName: return "Enter a project name."
         case .missingProject: return "This project is no longer in the library."
+        case .busy: return "Wait for the current file operation to finish."
         }
     }
 }

@@ -1,6 +1,17 @@
 import Foundation
 import simd
 
+/// Conservative application geometry budget, not a bound on ARKit/GPU memory.
+struct CaptureBudget {
+    var maximumVertices = 500_000
+    var maximumTriangles = 1_000_000
+    var maximumAnchors = 2_000
+    func allows(vertices: Int, triangles: Int, anchors: Int) -> Bool {
+        vertices >= 0 && triangles >= 0 && anchors >= 0 &&
+        vertices <= maximumVertices && triangles <= maximumTriangles && anchors <= maximumAnchors
+    }
+}
+
 struct MeshSample: Codable, Sendable {
     var vertices: [Vector3]
     var triangles: [Triangle]

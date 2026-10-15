@@ -4,6 +4,39 @@ import simd
 
 final class ProjectLibraryTests: XCTestCase {
     @MainActor
+    func testBackgroundOperationsAndFailureRecovery() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let library = ProjectLibrary(directory: directory)
+        do {
+            try await library.saveInBackground(name: "Empty", samples: [])
+            XCTFail("Empty geometry must not be saved")
+        } catch { }
+        XCTAssertFalse(library.isBusy)
+        XCTAssertTrue(library.projects.isEmpty)
+        let mesh = MeshSample(vertices: [.init(SIMD3<Float>(0, 0, 0)), .init(SIMD3<Float>(1, 0, 0)), .init(SIMD3<Float>(0, 1, 0))], triangles: [.init(a: 0, b: 1, c: 2)], transform: Matrix4x4(matrix_identity_float4x4))
+        try await library.saveInBackground(name: "Async", samples: [mesh])
+        let project = try XCTUnwrap(library.projects.first)
+        let loaded = try await library.loadInBackground(project)
+        XCTAssertEqual(loaded.first?.vertices.count, 3)
+        for format in ScanExportFormat.allCases {
+            let url = try await library.exportInBackground(project, format: format)
+            XCTAssertFalse(try Data(contentsOf: url).isEmpty)
+        }
+        try await library.duplicateInBackground(project.id)
+        XCTAssertFalse(library.isBusy)
+        let reopened = ProjectLibrary(directory: directory)
+        XCTAssertEqual(reopened.projects.count, 2)
+        XCTAssertEqual(reopened.projects.last?.exportHistory.count, 3)
+        // Corrupt a fixture archive and ensure failure clears the busy indicator.
+        let archive = directory.appendingPathComponent(try XCTUnwrap(project.meshFileName))
+        try Data("bad archive".utf8).write(to: archive)
+        do { _ = try await library.loadInBackground(project); XCTFail("Must reject corrupt archive") }
+        catch { }
+        XCTAssertFalse(library.isBusy)
+    }
+
+    @MainActor
     func testAllExportFormatsPersistHistoryAndFiles() throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: directory) }

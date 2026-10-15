@@ -22,8 +22,10 @@ struct DashboardView: View {
                         .contextMenu {
                             Button("Rename", systemImage: "pencil") { projectName = project.name; renaming = project }
                             Button("Duplicate", systemImage: "doc.on.doc") {
-                                do { try library.duplicate(project.id) }
-                                catch { library.errorMessage = error.localizedDescription }
+                                Task {
+                                    do { try await library.duplicateInBackground(project.id) }
+                                    catch { library.errorMessage = error.localizedDescription }
+                                }
                             }
                         }
                     }
@@ -32,6 +34,8 @@ struct DashboardView: View {
             }
             .navigationTitle("3117 LiDAR SCAN")
             .toolbar { Button("New Scan", systemImage: "plus") { showingCapture = true } }
+            .disabled(library.isBusy)
+            .overlay { if let operation = library.operation { ProgressView(operation).padding().background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12)) } }
         } detail: {
             ContentUnavailableView("Select a project or start a scan", systemImage: "cube.transparent")
         }
@@ -68,11 +72,14 @@ private struct SavedModelView: View {
     @State private var exportURL: URL?
     @State private var exportFormat: ScanExportFormat = .obj
     @State private var modelSummary = ""
+    @State private var loading = false
+    @State private var activeProjectID: UUID?
     @State private var measurement = "Tap two surfaces to measure. Drag to orbit; pinch to zoom."
 
     var body: some View {
         VStack {
             if let scene { MeshSceneView(scene: scene, measurement: $measurement) }
+            else if loading { ProgressView("Loading model…") }
             else { ContentUnavailableView("Model unavailable", systemImage: "cube") }
             Text(measurement).padding()
             Text(modelSummary).font(.caption).foregroundStyle(.secondary)
@@ -84,26 +91,38 @@ private struct SavedModelView: View {
             HStack {
                 Button("Export \(exportFormat.rawValue)") {
                     exportURL = nil
-                    do { exportURL = try library.export(project, format: exportFormat) }
-                    catch { errorMessage = error.localizedDescription }
-                }.disabled(scene == nil)
+                    let id = project.id
+                    let format = exportFormat
+                    Task {
+                        do {
+                            let url = try await library.exportInBackground(project, format: format)
+                            if activeProjectID == id { exportURL = url }
+                        } catch { if activeProjectID == id { errorMessage = error.localizedDescription } }
+                    }
+                }.disabled(scene == nil || library.isBusy)
                 if let exportURL { ShareLink("Share \(exportURL.pathExtension.uppercased())", item: exportURL) }
             }.padding()
         }
         .navigationTitle(library.projects.first(where: { $0.id == project.id })?.name ?? project.name)
         .task(id: project.id) {
+            activeProjectID = project.id
+            loading = true
             scene = nil
             exportURL = nil
             errorMessage = nil
             modelSummary = ""
             measurement = "Tap two surfaces to measure. Drag to orbit; pinch to zoom."
             do {
-                let samples = try library.load(project)
+                let samples = try await library.loadInBackground(project)
+                try Task.checkCancellation()
                 scene = try buildScene(samples)
                 modelSummary = "\(samples.reduce(0) { $0 + $1.vertices.count }) vertices • \(samples.reduce(0) { $0 + $1.triangles.count }) triangles"
             }
-            catch { errorMessage = error.localizedDescription }
+            catch is CancellationError { return }
+            catch { if !Task.isCancelled { errorMessage = error.localizedDescription } }
+            if !Task.isCancelled { loading = false }
         }
+        .onDisappear { activeProjectID = nil }
         .alert("Model operation failed", isPresented: Binding(get: { errorMessage != nil }, set: { if !$0 { errorMessage = nil } })) {
             Button("OK") { errorMessage = nil }
         } message: { Text(errorMessage ?? "") }
