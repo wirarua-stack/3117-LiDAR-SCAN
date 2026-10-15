@@ -101,14 +101,25 @@ private struct SavedModelView: View {
     @State private var modelSummary = ""
     @State private var loading = false
     @State private var activeProjectID: UUID?
+    @State private var measuring = false
+    @State private var clearMeasurement = UUID()
+    @State private var loadingStage = "Loading model…"
     @State private var measurement = "Tap two surfaces to measure. Drag to orbit; pinch to zoom."
 
     var body: some View {
         VStack {
-            if let scene { MeshSceneView(scene: scene, measurement: $measurement) }
-            else if loading { ProgressView("Loading model…") }
+            if let scene { MeshSceneView(scene: scene, measuring: measuring, resetID: clearMeasurement, measurement: $measurement) }
+            else if loading { ProgressView(loadingStage) }
             else { ContentUnavailableView("Model unavailable", systemImage: "cube") }
+            HStack {
+                Toggle("Measure surfaces", isOn: $measuring)
+                Button("Clear measurement") {
+                    clearMeasurement = UUID()
+                    measurement = "Measurement cleared. Select two surfaces."
+                }
+            }.padding(.horizontal).disabled(scene == nil)
             Text(measurement).padding()
+            Text("A = cyan • B = green • straight-line distance • temporary, not saved").font(.caption).foregroundStyle(.secondary)
             Text(modelSummary).font(.caption).foregroundStyle(.secondary)
             if let operation = library.operation { ProgressView(operation) }
             Text("Estimated surface distance • validate against site references").font(.caption).foregroundStyle(.secondary)
@@ -135,15 +146,26 @@ private struct SavedModelView: View {
         .task(id: project.id) {
             activeProjectID = project.id
             loading = true
+            loadingStage = "Loading model…"
+            measuring = false
+            clearMeasurement = UUID()
             scene = nil
             exportURL = nil
             errorMessage = nil
             modelSummary = ""
-            measurement = "Tap two surfaces to measure. Drag to orbit; pinch to zoom."
+            measurement = "Drag to orbit; pinch to zoom. Enable Measure surfaces to select points."
             do {
                 let samples = try await library.loadInBackground(project)
                 try Task.checkCancellation()
-                scene = try buildScene(samples)
+                loadingStage = "Preparing geometry…"
+                let worker = Task.detached(priority: .userInitiated) { try PreparedMesh.prepare(samples) }
+                let prepared = try await withTaskCancellationHandler {
+                    try await worker.value
+                } onCancel: { worker.cancel() }
+                try Task.checkCancellation()
+                let builtScene = try await buildScene(prepared)
+                try Task.checkCancellation()
+                scene = builtScene
                 modelSummary = "\(samples.reduce(0) { $0 + $1.vertices.count }) vertices • \(samples.reduce(0) { $0 + $1.triangles.count }) triangles"
             }
             catch is CancellationError { return }
@@ -156,21 +178,24 @@ private struct SavedModelView: View {
         } message: { Text(errorMessage ?? "") }
     }
 
-    private func buildScene(_ samples: [MeshSample]) throws -> SCNScene {
+    @MainActor
+    private func buildScene(_ meshes: [PreparedMesh]) async throws -> SCNScene {
         let scene = SCNScene()
-        for sample in samples {
-            try sample.validate()
-            let vertices = sample.vertices.map { vertex -> SCNVector3 in
-                let p = sample.transform.transform(vertex)
-                return SCNVector3(p.x, p.y, p.z)
-            }
-            let indices = sample.triangles.flatMap { [$0.a, $0.b, $0.c] }
-            let geometry = SCNGeometry(sources: [SCNGeometrySource(vertices: vertices)], elements: [SCNGeometryElement(indices: indices, primitiveType: .triangles)])
+        for (index, mesh) in meshes.enumerated() {
+            try Task.checkCancellation()
+            loadingStage = "Creating model \(index + 1) / \(meshes.count)…"
+            let source = SCNGeometrySource(data: mesh.positions, semantic: .vertex, vectorCount: mesh.vertexCount,
+                                           usesFloatComponents: true, componentsPerVector: 3, bytesPerComponent: 4, dataOffset: 0, dataStride: 12)
+            let element = SCNGeometryElement(data: mesh.indices, primitiveType: .triangles, primitiveCount: mesh.triangleCount, bytesPerIndex: 4)
+            let geometry = SCNGeometry(sources: [source], elements: [element])
             let material = SCNMaterial()
             material.diffuse.contents = UIColor.systemOrange
             material.isDoubleSided = true
             geometry.materials = [material]
-            scene.rootNode.addChildNode(SCNNode(geometry: geometry))
+            let node = SCNNode(geometry: geometry)
+            node.categoryBitMask = 1
+            scene.rootNode.addChildNode(node)
+            await Task.yield()
         }
         return scene
     }
@@ -178,6 +203,8 @@ private struct SavedModelView: View {
 
 private struct MeshSceneView: UIViewRepresentable {
     let scene: SCNScene
+    let measuring: Bool
+    let resetID: UUID
     @Binding var measurement: String
     func makeCoordinator() -> Coordinator { Coordinator(measurement: $measurement) }
     func makeUIView(context: Context) -> SCNView {
@@ -186,25 +213,73 @@ private struct MeshSceneView: UIViewRepresentable {
         view.allowsCameraControl = true
         view.autoenablesDefaultLighting = true
         view.scene = scene
+        context.coordinator.measuring = measuring
+        context.coordinator.resetID = resetID
         view.addGestureRecognizer(UITapGestureRecognizer(target: context.coordinator, action: #selector(Coordinator.tap(_:))))
         return view
     }
     func updateUIView(_ view: SCNView, context: Context) {
-        if view.scene !== scene { view.scene = scene; context.coordinator.first = nil }
+        let coordinator = context.coordinator
+        if view.scene !== scene || coordinator.resetID != resetID {
+            coordinator.clear()
+            view.scene = scene
+            coordinator.resetID = resetID
+        }
+        coordinator.measuring = measuring
     }
     final class Coordinator: NSObject {
-        var first: SIMD3<Float>?
+        var selection = MeasurementSelection()
+        var measuring = false
+        var resetID: UUID?
+        private var annotations: [SCNNode] = []
         var measurement: Binding<String>
         init(measurement: Binding<String>) { self.measurement = measurement }
+        func clear() {
+            selection.clear()
+            annotations.forEach { $0.removeFromParentNode() }
+            annotations.removeAll()
+        }
+        private func annotate(in scene: SCNScene) {
+            annotations.forEach { $0.removeFromParentNode() }
+            annotations.removeAll()
+            for (index, point) in selection.points.enumerated() {
+                let sphere = SCNSphere(radius: 0.015)
+                let material = SCNMaterial()
+                material.diffuse.contents = index == 0 ? UIColor.cyan : UIColor.green
+                material.lightingModel = .constant
+                sphere.materials = [material]
+                let node = SCNNode(geometry: sphere)
+                node.position = SCNVector3(point.x, point.y, point.z)
+                node.categoryBitMask = 2
+                scene.rootNode.addChildNode(node)
+                annotations.append(node)
+            }
+            if selection.points.count == 2 {
+                let vertices = selection.points.map { SCNVector3($0.x, $0.y, $0.z) }
+                let geometry = SCNGeometry(sources: [SCNGeometrySource(vertices: vertices)], elements: [SCNGeometryElement(indices: [Int32(0), Int32(1)], primitiveType: .line)])
+                let material = SCNMaterial()
+                material.diffuse.contents = UIColor.green
+                material.lightingModel = .constant
+                geometry.materials = [material]
+                let node = SCNNode(geometry: geometry)
+                node.categoryBitMask = 2
+                scene.rootNode.addChildNode(node)
+                annotations.append(node)
+            }
+        }
         @objc func tap(_ gesture: UITapGestureRecognizer) {
-            guard let view = gesture.view as? SCNView,
-                  let hit = view.hitTest(gesture.location(in: view), options: nil).first else { return }
+            guard measuring, let view = gesture.view as? SCNView, let scene = view.scene else { return }
+            // Annotation nodes use category 2 so they cannot become measurement surfaces.
+            guard let hit = view.hitTest(gesture.location(in: view), options: [.categoryBitMask: 1]).first else {
+                measurement.wrappedValue = "No surface selected. Tap the mesh."; return
+            }
             let p = hit.worldCoordinates
             let point = SIMD3<Float>(p.x, p.y, p.z)
-            if let first {
-                measurement.wrappedValue = Measurement.display(Measurement.distanceMetres(from: first, to: point))
-                self.first = nil
-            } else { first = point; measurement.wrappedValue = "First point selected. Tap a second surface." }
+            guard selection.select(point) else { measurement.wrappedValue = "Invalid point. Try another surface."; return }
+            annotate(in: scene)
+            if let distance = selection.distance {
+                measurement.wrappedValue = "A → B: " + Measurement.display(distance)
+            } else { measurement.wrappedValue = "Point A selected (cyan). Tap point B." }
         }
     }
 }

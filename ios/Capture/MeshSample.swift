@@ -25,6 +25,38 @@ struct MeshSample: Codable, Sendable {
     }
 }
 
+/// Packed CPU geometry, prepared away from the UI; no SceneKit objects cross actors.
+struct PreparedMesh: Sendable {
+    let positions: Data
+    let indices: Data
+    let vertexCount: Int
+    let triangleCount: Int
+
+    static func prepare(_ samples: [MeshSample]) throws -> [PreparedMesh] {
+        try samples.map { sample in
+            try Task.checkCancellation()
+            try sample.validate()
+            var positions: [Float] = []
+            positions.reserveCapacity(sample.vertices.count * 3)
+            for (index, vertex) in sample.vertices.enumerated() {
+                if index % 4096 == 0 { try Task.checkCancellation() }
+                let point = sample.transform.transform(vertex)
+                guard point.x.isFinite, point.y.isFinite, point.z.isFinite else { throw CocoaError(.fileReadCorruptFile) }
+                positions.append(contentsOf: [point.x, point.y, point.z])
+            }
+            var indices: [UInt32] = []
+            indices.reserveCapacity(sample.triangles.count * 3)
+            for (index, triangle) in sample.triangles.enumerated() {
+                if index % 4096 == 0 { try Task.checkCancellation() }
+                indices.append(contentsOf: [triangle.a, triangle.b, triangle.c])
+            }
+            return PreparedMesh(positions: positions.withUnsafeBufferPointer { Data(buffer: $0) },
+                                indices: indices.withUnsafeBufferPointer { Data(buffer: $0) },
+                                vertexCount: sample.vertices.count, triangleCount: sample.triangles.count)
+        }
+    }
+}
+
 struct Vector3: Codable, Sendable {
     var x: Float; var y: Float; var z: Float
     init(_ value: SIMD3<Float>) { x = value.x; y = value.y; z = value.z }

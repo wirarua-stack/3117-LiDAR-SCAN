@@ -31,6 +31,42 @@ final class MeshExportTests: XCTestCase {
         XCTAssertEqual(decoded[0].vertices.count, 3)
         XCTAssertEqual(decoded[0].triangles[0].c, 2)
     }
+    func testPreparedMeshUsesPackedWorldCoordinatesAndIndices() throws {
+        var sample = triangle()
+        var transform = matrix_identity_float4x4
+        transform.columns.3 = SIMD4<Float>(10, 20, 30, 1)
+        sample.transform = Matrix4x4(transform)
+        let mesh = try XCTUnwrap(PreparedMesh.prepare([sample]).first)
+        XCTAssertEqual(mesh.vertexCount, 3)
+        XCTAssertEqual(mesh.triangleCount, 1)
+        XCTAssertEqual(mesh.positions.count, 3 * 3 * 4)
+        XCTAssertEqual(mesh.indices.count, 3 * 4)
+        let xyz = mesh.positions.withUnsafeBytes { bytes in
+            (0..<9).map { bytes.loadUnaligned(fromByteOffset: $0 * 4, as: Float.self) }
+        }
+        XCTAssertEqual(xyz, [10, 20, 30, 11, 20, 30, 10, 21, 30])
+        let indices = mesh.indices.withUnsafeBytes { bytes in
+            (0..<3).map { bytes.loadUnaligned(fromByteOffset: $0 * 4, as: UInt32.self) }
+        }
+        XCTAssertEqual(indices, [0, 1, 2])
+    }
+    func testPreparedMeshRejectsInvalidGeometryAndOverflow() {
+        var sample = triangle()
+        sample.triangles[0].c = 999
+        XCTAssertThrowsError(try PreparedMesh.prepare([sample]))
+        sample = triangle()
+        sample.vertices[1].x = Float.greatestFiniteMagnitude
+        sample.transform.values[0] = 2
+        XCTAssertThrowsError(try PreparedMesh.prepare([sample]))
+    }
+    func testPreparedMeshHonorsCancellation() async {
+        let worker = Task {
+            withUnsafeCurrentTask { $0?.cancel() }
+            return try PreparedMesh.prepare([triangle()])
+        }
+        do { _ = try await worker.value; XCTFail("Expected cancellation") }
+        catch { XCTAssertTrue(error is CancellationError) }
+    }
     func testPLYHeaderAndWorldCoordinates() throws {
         var moved = triangle()
         var transform = matrix_identity_float4x4
