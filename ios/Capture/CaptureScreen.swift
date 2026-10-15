@@ -9,6 +9,9 @@ struct CaptureScreen: View {
     @State private var name = "Untitled Scan"
     @State private var errorMessage: String?
     @State private var confirmingDiscard = false
+    @State private var captureProject = ScanProject(name: "Untitled Scan")
+    @State private var checkpointStatus = "No recovery checkpoint yet"
+    @State private var ending = false
 
     var body: some View {
         NavigationStack {
@@ -20,6 +23,7 @@ struct CaptureScreen: View {
                     Text("Mesh anchors: \(scan.meshCount) • Vertices: \(scan.vertexCount) / 500000").font(.caption).foregroundStyle(.white)
                     if let operation = library.operation { ProgressView(operation).tint(.orange) }
                     Text(scan.trackingStatus).font(.caption).foregroundStyle(.white)
+                    Text(checkpointStatus).font(.caption).foregroundStyle(.white)
                     TextField("Project name", text: $name).textFieldStyle(.roundedBorder).frame(maxWidth: 350)
                     Text(scan.measurementText).font(.caption).foregroundStyle(.white)
                     HStack { Button("Mark point") { scan.markMeasurementPoint() }; Button("Pause") { scan.pause() }; Button("Resume") { scan.resume() }; Button("Save scan") { finish() }.buttonStyle(.borderedProminent).disabled(scan.meshCount == 0) }
@@ -29,18 +33,31 @@ struct CaptureScreen: View {
             .toolbar { ToolbarItem(placement: .cancellationAction) {
                 Button("Cancel") {
                     if scan.meshCount > 0 { confirmingDiscard = true }
-                    else { dismiss() }
+                    else { ending = true; dismiss() }
                 }.disabled(library.isBusy)
             } }
             .interactiveDismissDisabled(scan.meshCount > 0 || library.isBusy)
             .confirmationDialog("Discard this unsaved scan?", isPresented: $confirmingDiscard, titleVisibility: .visible) {
-                Button("Discard scan", role: .destructive) { dismiss() }
+                Button("Discard scan", role: .destructive) {
+                    do { try library.discardDraft(captureProject.id); ending = true; dismiss() }
+                    catch { errorMessage = error.localizedDescription }
+                }
                 Button("Keep scanning", role: .cancel) { }
             }
             .onAppear { scan.requestCameraAndStart() }
-            .onDisappear { scan.close() }
+            .onDisappear { ending = true; scan.close() }
+            .task {
+                while !Task.isCancelled {
+                    do { try await Task.sleep(for: .seconds(20)) }
+                    catch { return }
+                    if !Task.isCancelled { await checkpoint() }
+                }
+            }
             .onChange(of: scenePhase) { _, phase in
-                if phase != .active { scan.pause(reason: "App inactive. Return to the scanned area, then tap Resume.") }
+                if phase != .active {
+                    scan.pause(reason: "App inactive. Return to the scanned area, then tap Resume.")
+                    Task { await checkpoint() }
+                }
             }
             .onReceive(NotificationCenter.default.publisher(for: ProcessInfo.thermalStateDidChangeNotification)) { _ in scan.thermalStateChanged() }
             .onReceive(NotificationCenter.default.publisher(for: UIApplication.didReceiveMemoryWarningNotification)) { _ in scan.memoryWarning() }
@@ -52,13 +69,22 @@ struct CaptureScreen: View {
     private func finish() {
         scan.finish()
         guard !library.isBusy else { return }
+        ending = true
         let samples = scan.snapshot()
         Task {
             do {
-                try await library.saveInBackground(name: name, samples: samples)
+                try await library.saveInBackground(name: name, samples: samples, captureProject: captureProject)
                 dismiss()
-            } catch { errorMessage = error.localizedDescription }
+            } catch { ending = false; errorMessage = error.localizedDescription }
         }
+    }
+    private func checkpoint() async {
+        guard !ending, scan.meshCount > 0, !library.isBusy else { return }
+        captureProject.name = name
+        do {
+            try await library.checkpoint(project: captureProject, samples: scan.snapshot())
+            checkpointStatus = "Recovery saved at \(Date.now.formatted(date: .omitted, time: .shortened))"
+        } catch { checkpointStatus = "Recovery save failed: \(error.localizedDescription)" }
     }
 }
 

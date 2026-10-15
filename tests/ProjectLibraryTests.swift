@@ -4,6 +4,60 @@ import simd
 
 final class ProjectLibraryTests: XCTestCase {
     @MainActor
+    func testCheckpointReopenRecoverAndDiscard() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let library = ProjectLibrary(directory: directory)
+        var project = ScanProject(name: "Recovery fixture")
+        let mesh = MeshSample(vertices: [.init(SIMD3<Float>(0, 0, 0)), .init(SIMD3<Float>(1, 0, 0)), .init(SIMD3<Float>(0, 1, 0))], triangles: [.init(a: 0, b: 1, c: 2)], transform: Matrix4x4(matrix_identity_float4x4))
+        try await library.checkpoint(project: project, samples: [mesh])
+        project.name = "Latest checkpoint"
+        try await library.checkpoint(project: project, samples: [mesh, mesh])
+        // Failed validation cannot replace the previous valid checkpoint.
+        do { try await library.checkpoint(project: project, samples: []); XCTFail("Must reject empty draft") }
+        catch { }
+        let reopened = ProjectLibrary(directory: directory)
+        XCTAssertEqual(reopened.draftIDs, [project.id])
+        XCTAssertTrue(reopened.projects.isEmpty)
+        try await reopened.recoverDraft(project.id)
+        let recovered = try XCTUnwrap(reopened.projects.first)
+        XCTAssertEqual(recovered.id, project.id)
+        XCTAssertEqual(recovered.name, "Latest checkpoint")
+        XCTAssertEqual(recovered.capturedAt, project.capturedAt)
+        XCTAssertEqual(try reopened.load(recovered).count, 2)
+        XCTAssertTrue(reopened.draftIDs.isEmpty)
+        // Simulate a crash between project commit and removal of its checkpoint.
+        try await reopened.checkpoint(project: project, samples: [mesh])
+        try await reopened.recoverDraft(project.id)
+        XCTAssertEqual(reopened.projects.count, 1)
+        XCTAssertEqual(try reopened.load(recovered).count, 2)
+        let other = ScanProject(name: "Discard fixture")
+        try await reopened.checkpoint(project: other, samples: [mesh])
+        try reopened.discardDraft(other.id)
+        XCTAssertTrue(ProjectLibrary(directory: directory).draftIDs.isEmpty)
+        XCTAssertEqual(reopened.projects.count, 1)
+    }
+
+    @MainActor
+    func testCorruptDraftIsRetainedAfterRecoveryFailure() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let folder = directory.appendingPathComponent("Drafts")
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        let id = UUID()
+        let url = folder.appendingPathComponent("\(id.uuidString).json")
+        let bytes = Data("corrupt fixture".utf8)
+        try bytes.write(to: url)
+        let library = ProjectLibrary(directory: directory)
+        XCTAssertEqual(library.draftIDs, [id])
+        do { try await library.recoverDraft(id); XCTFail("Must reject corrupt draft") }
+        catch { }
+        XCTAssertEqual(try Data(contentsOf: url), bytes)
+        XCTAssertFalse(library.isBusy)
+        XCTAssertTrue(library.projects.isEmpty)
+    }
+
+    @MainActor
     func testBackgroundOperationsAndFailureRecovery() async throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: directory) }

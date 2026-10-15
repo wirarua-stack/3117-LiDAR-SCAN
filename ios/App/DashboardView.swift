@@ -6,10 +6,28 @@ struct DashboardView: View {
     @State private var showingCapture = false
     @State private var renaming: ScanProject?
     @State private var projectName = ""
+    @State private var discardingDraft: UUID?
 
     var body: some View {
         NavigationSplitView {
             List {
+                if !library.draftIDs.isEmpty {
+                    Section("Recover unsaved scans") {
+                        Text("Recover the last checkpoint as a saved model. Live scanning cannot resume in its old coordinate frame.").font(.caption)
+                        ForEach(library.draftIDs, id: \.self) { id in
+                            HStack {
+                                Text("Draft \(id.uuidString.prefix(8))")
+                                Button("Recover") {
+                                    Task {
+                                        do { try await library.recoverDraft(id) }
+                                        catch { library.errorMessage = "Recovery failed. Draft retained: \(error.localizedDescription)" }
+                                    }
+                                }.buttonStyle(.bordered)
+                                Button("Discard", role: .destructive) { discardingDraft = id }.buttonStyle(.bordered)
+                            }
+                        }
+                    }
+                }
                 Section("Projects") {
                     ForEach(library.projects) { project in
                         NavigationLink { SavedModelView(project: project) } label: {
@@ -40,6 +58,15 @@ struct DashboardView: View {
             ContentUnavailableView("Select a project or start a scan", systemImage: "cube.transparent")
         }
         .sheet(isPresented: $showingCapture) { CaptureScreen() }
+        .confirmationDialog("Permanently discard this recovery draft?", isPresented: Binding(get: { discardingDraft != nil }, set: { if !$0 { discardingDraft = nil } }), titleVisibility: .visible) {
+            Button("Discard draft", role: .destructive) {
+                if let id = discardingDraft {
+                    do { try library.discardDraft(id) }
+                    catch { library.errorMessage = error.localizedDescription }
+                }
+                discardingDraft = nil
+            }
+        }
         .sheet(item: $renaming) { project in
             NavigationStack {
                 Form { TextField("Project name", text: $projectName) }

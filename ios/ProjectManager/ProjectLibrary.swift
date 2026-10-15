@@ -6,6 +6,7 @@ final class ProjectLibrary: ObservableObject {
     @Published private(set) var projects: [ScanProject] = []
     @Published var errorMessage: String?
     @Published private(set) var operation: String?
+    @Published private(set) var draftIDs: [UUID] = []
     var isBusy: Bool { operation != nil }
     private var writable = true
     private let fileURL: URL
@@ -20,6 +21,7 @@ final class ProjectLibrary: ObservableObject {
                 projects = try JSONDecoder().decode([ScanProject].self, from: Data(contentsOf: fileURL))
             }
         } catch { writable = false; errorMessage = error.localizedDescription }
+        refreshDrafts()
     }
     private func commit(_ updated: [ScanProject]) throws {
         guard writable else { throw CocoaError(.fileWriteNoPermission) }
@@ -93,13 +95,19 @@ final class ProjectLibrary: ObservableObject {
         return url
     }
 
-    func saveInBackground(name: String, samples: [MeshSample]) async throws {
+    func saveInBackground(name: String, samples: [MeshSample], captureProject: ScanProject? = nil) async throws {
         guard !isBusy else { throw LibraryError.busy }
         guard writable else { throw CocoaError(.fileWriteNoPermission) }
         operation = "Saving scan…"
         defer { operation = nil }
         let cleaned = name.trimmingCharacters(in: .whitespacesAndNewlines)
-        var project = ScanProject(name: cleaned.isEmpty ? "Untitled Scan" : cleaned)
+        var project = captureProject ?? ScanProject(name: cleaned.isEmpty ? "Untitled Scan" : cleaned)
+        project.name = cleaned.isEmpty ? "Untitled Scan" : cleaned
+        // Recovery is idempotent if the app stopped after committing metadata but before draft cleanup.
+        if projects.contains(where: { $0.id == project.id }) {
+            try removeDraft(project.id)
+            return
+        }
         project.meshFileName = "\(project.id.uuidString).mesh.json"
         let url = fileURL.deletingLastPathComponent().appendingPathComponent(project.meshFileName!)
         try await Task.detached(priority: .userInitiated) {
@@ -109,6 +117,61 @@ final class ProjectLibrary: ObservableObject {
         }.value
         // Merge with current metadata only after the archive has been safely written.
         try commit([project] + projects)
+        // A failed cleanup must not turn a successful project commit into an apparent failed save.
+        do { try removeDraft(project.id) }
+        catch { errorMessage = "Project saved, but draft cleanup failed: \(error.localizedDescription)" }
+    }
+
+    private var draftsFolder: URL { fileURL.deletingLastPathComponent().appendingPathComponent("Drafts", isDirectory: true) }
+    private func draftURL(_ id: UUID) -> URL { draftsFolder.appendingPathComponent("\(id.uuidString).json") }
+    private func refreshDrafts() {
+        guard FileManager.default.fileExists(atPath: draftsFolder.path) else { draftIDs = []; return }
+        do {
+            draftIDs = try FileManager.default.contentsOfDirectory(at: draftsFolder, includingPropertiesForKeys: nil)
+                .filter { $0.pathExtension == "json" }
+                .compactMap { UUID(uuidString: $0.deletingPathExtension().lastPathComponent) }
+                .sorted { $0.uuidString < $1.uuidString }
+        } catch { errorMessage = "Cannot list recovery drafts: \(error.localizedDescription)" }
+    }
+    private func removeDraft(_ id: UUID) throws {
+        let url = draftURL(id)
+        if FileManager.default.fileExists(atPath: url.path) { try FileManager.default.removeItem(at: url) }
+        refreshDrafts()
+    }
+    func discardDraft(_ id: UUID) throws {
+        guard !isBusy else { throw LibraryError.busy }
+        try removeDraft(id)
+    }
+    func checkpoint(project: ScanProject, samples: [MeshSample]) async throws {
+        guard !isBusy else { throw LibraryError.busy }
+        guard writable else { throw CocoaError(.fileWriteNoPermission) }
+        operation = "Saving recovery draft…"
+        defer { operation = nil }
+        let draft = ScanDraft(project: project, savedAt: .now, samples: samples)
+        let folder = draftsFolder
+        let url = draftURL(project.id)
+        try await Task.detached(priority: .utility) {
+            try draft.validate(expectedID: project.id)
+            try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+            // Single atomic envelope: metadata and geometry always refer to the same checkpoint.
+            try JSONEncoder().encode(draft).write(to: url, options: .atomic)
+        }.value
+        refreshDrafts()
+    }
+    func recoverDraft(_ id: UUID) async throws {
+        guard !isBusy else { throw LibraryError.busy }
+        operation = "Reading recovery draft…"
+        let url = draftURL(id)
+        let draft: ScanDraft
+        do {
+            draft = try await Task.detached(priority: .userInitiated) {
+                let value = try JSONDecoder().decode(ScanDraft.self, from: Data(contentsOf: url))
+                try value.validate(expectedID: id)
+                return value
+            }.value
+        } catch { operation = nil; throw error }
+        operation = nil
+        try await saveInBackground(name: draft.project.name, samples: draft.samples, captureProject: draft.project)
     }
 
     func loadInBackground(_ project: ScanProject) async throws -> [MeshSample] {

@@ -3,7 +3,7 @@ import Foundation
 import UIKit
 #endif
 
-struct ScanProject: Codable, Identifiable, Hashable {
+struct ScanProject: Codable, Identifiable, Hashable, Sendable {
     let id: UUID
     var name: String
     var capturedAt: Date
@@ -20,7 +20,19 @@ struct ScanProject: Codable, Identifiable, Hashable {
     }
 }
 
-struct ExportRecord: Codable, Hashable { let format: String; let date: Date; let fileName: String }
+struct ExportRecord: Codable, Hashable, Sendable { let format: String; let date: Date; let fileName: String }
+
+struct ScanDraft: Codable, Sendable {
+    var version = 1
+    let project: ScanProject
+    let savedAt: Date
+    let samples: [MeshSample]
+    func validate(expectedID: UUID) throws {
+        guard version == 1, project.id == expectedID,
+              samples.contains(where: { !$0.triangles.isEmpty }) else { throw CocoaError(.fileReadCorruptFile) }
+        try samples.forEach { try $0.validate() }
+    }
+}
 
 enum DeviceInfo {
     static var modelIdentifier: String {
