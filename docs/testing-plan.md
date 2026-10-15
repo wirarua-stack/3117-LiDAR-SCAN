@@ -1,12 +1,21 @@
 # Testing plan
 
+## Saved measurements and CSV acceptance
+
+- Open a saved scan, enable Measure surfaces, select A/B, and Save measurement with a Thai label. Close/relaunch the app: Saved measurements must retain label, date and distance; tapping the record must display the same endpoints. Clear measurement must clear only the current selection, not saved records.
+- Duplicate the project and check that its measurements are preserved while its project ID changes. Old projects without a measurement field must still open and accept new records.
+- Export CSV from Saved measurements and use Share measurement CSV to save a report. Import as UTF-8/comma-delimited into an independent CSV reader; verify Thai text, labels containing commas/quotes/newlines, negative coordinates, metre units and a known distance.
+- Test formula-like labels (for example `=1+1` and whitespace-prefixed formulas): textual cells must not execute as spreadsheet formulas. Apostrophe prefixes may appear in readers that treat CSV purely as text.
+- Open two projects in succession and verify reports and endpoint recall belong to the selected project. File names and rows must identify that project. Report files are snapshots: later changes require a new export.
+- Inject metadata write failure: saving must report failure rather than claim success. CSV export failure must clear the operation indicator. Never use the report as a certified survey result without independent validation.
+
 ## Viewer and visible measurement acceptance
 
 - Open a large saved model and check that read/preparation/assembly stage labels appear. Navigate away while preparation or assembly is running: cancelled work must not replace the new project's scene or leave old measurement markers. Profile frame time and peak memory on physical iPad; preparation being off-main is not sufficient evidence of smooth GPU upload.
 - With Measure surfaces off, tap/drag/pinch: no endpoints should be created. Enable it and tap two mesh surfaces: cyan A, green B and a line should match the selected world positions. Orbit and zoom to inspect the endpoints from another angle.
 - Tap directly over an existing marker: selection must hit only the underlying mesh, not the annotation sphere/line. Tap empty background: retain the previous endpoints and show a no-surface message.
 - A third valid tap starts a new pair and removes the previous line. Clear removes both markers and the line. Changing projects must reset measurement mode and selection.
-- Compare a known reference length; distinguish straight-line distance from along-surface distance. The markers are visual aids, not survey accuracy guarantees. Closing the viewer discards annotations; geometry exports must not contain markers or measurement lines.
+- Compare a known reference length; distinguish straight-line distance from along-surface distance. The markers are visual aids, not survey accuracy guarantees. Closing the viewer discards unsaved selections; explicitly saved records remain. Geometry exports must not contain markers or measurement lines.
 
 ## Stability acceptance (physical device required)
 
