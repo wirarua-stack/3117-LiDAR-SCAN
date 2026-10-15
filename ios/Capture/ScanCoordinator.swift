@@ -21,6 +21,12 @@ final class ScanCoordinator: NSObject, ObservableObject, ARSessionDelegate {
     let arView = ARView(frame: .zero)
     private var samples: [UUID: MeshSample] = [:]
 
+    override init() {
+        super.init()
+        // Prime thermal monitoring before CaptureScreen subscribes to notifications.
+        _ = ProcessInfo.processInfo.thermalState
+    }
+
     func requestCameraAndStart() {
         guard !started, !closed else { return }
         switch AVCaptureDevice.authorizationStatus(for: .video) {

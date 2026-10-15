@@ -83,6 +83,7 @@ private struct SavedModelView: View {
             else { ContentUnavailableView("Model unavailable", systemImage: "cube") }
             Text(measurement).padding()
             Text(modelSummary).font(.caption).foregroundStyle(.secondary)
+            if let operation = library.operation { ProgressView(operation) }
             Text("Estimated surface distance • validate against site references").font(.caption).foregroundStyle(.secondary)
             Picker("Export format", selection: $exportFormat) {
                 ForEach(ScanExportFormat.allCases) { format in Text(format.label).tag(format) }
