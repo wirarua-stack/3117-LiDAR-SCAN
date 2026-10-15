@@ -31,7 +31,7 @@ struct ScanDraft: Codable, Sendable {
     let samples: [MeshSample]
     func validate(expectedID: UUID) throws {
         guard version == 1, project.id == expectedID,
-              samples.contains(where: { !$0.triangles.isEmpty }) else { throw CocoaError(.fileReadCorruptFile) }
+              samples.contains(where: { $0.isUsable }) else { throw CocoaError(.fileReadCorruptFile) }
         try samples.forEach { try $0.validate() }
     }
 }

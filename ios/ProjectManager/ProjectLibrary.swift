@@ -31,10 +31,11 @@ final class ProjectLibrary: ObservableObject {
     func save(name: String, samples: [MeshSample]) throws {
         guard !isBusy else { throw LibraryError.busy }
         guard writable else { throw CocoaError(.fileWriteNoPermission) }
-        guard samples.contains(where: { !$0.triangles.isEmpty }) else { throw CocoaError(.fileReadCorruptFile) }
+        guard samples.contains(where: { $0.isUsable }) else { throw CocoaError(.fileReadCorruptFile) }
         try samples.forEach { try $0.validate() }
         let cleaned = name.trimmingCharacters(in: .whitespacesAndNewlines)
         var project = ScanProject(name: cleaned.isEmpty ? "Untitled Scan" : cleaned)
+        if samples.contains(where: { $0.depthSource != nil && !$0.vertices.isEmpty }) { project.scanType = "LiDAR depth + RGB point cloud" }
         project.meshFileName = "\(project.id.uuidString).mesh.json"
         try JSONEncoder().encode(samples).write(to: fileURL.deletingLastPathComponent().appendingPathComponent(project.meshFileName!), options: .atomic)
         try commit([project] + projects)
@@ -104,6 +105,7 @@ final class ProjectLibrary: ObservableObject {
         let cleaned = name.trimmingCharacters(in: .whitespacesAndNewlines)
         var project = captureProject ?? ScanProject(name: cleaned.isEmpty ? "Untitled Scan" : cleaned)
         project.name = cleaned.isEmpty ? "Untitled Scan" : cleaned
+        if samples.contains(where: { $0.depthSource != nil && !$0.vertices.isEmpty }) { project.scanType = "LiDAR depth + RGB point cloud" }
         // Recovery is idempotent if the app stopped after committing metadata but before draft cleanup.
         if projects.contains(where: { $0.id == project.id }) {
             try removeDraft(project.id)
@@ -112,7 +114,7 @@ final class ProjectLibrary: ObservableObject {
         project.meshFileName = "\(project.id.uuidString).mesh.json"
         let url = fileURL.deletingLastPathComponent().appendingPathComponent(project.meshFileName!)
         try await Task.detached(priority: .userInitiated) {
-            guard samples.contains(where: { !$0.triangles.isEmpty }) else { throw CocoaError(.fileReadCorruptFile) }
+            guard samples.contains(where: { $0.isUsable }) else { throw CocoaError(.fileReadCorruptFile) }
             try samples.forEach { try $0.validate() }
             try JSONEncoder().encode(samples).write(to: url, options: .atomic)
         }.value

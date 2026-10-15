@@ -20,7 +20,7 @@ Apple SDKs and any future third-party integrations retain their own terms; they 
 
 3117 LiDAR SCAN will help field engineers turn existing-building captures into measured, reviewed, editable BIM elements for renovation, as-built documentation, and construction verification. Users must be able to trace each generated element back to its source scan and measurements. Human review and correction are required between detection and BIM generation. See the staged deliverables and acceptance gates in [the roadmap](docs/development-roadmap.md).
 
-This is the product direction, not a claim of implemented end-to-end functionality. Point-cloud fusion, element detection, and Revit generation remain to be built. Xcode compilation passed on GitHub Actions; physical-device acceptance remains unverified.
+This is the product direction, not a claim of implemented end-to-end functionality. Initial depth/RGB voxel accumulation is implemented in source; robust reconstruction, element detection, and Revit generation remain future work. Physical-device acceptance remains unverified. See [depth capture and its limitations](docs/depth-point-cloud.md).
 
 ## Verified build
 
@@ -34,13 +34,15 @@ The source includes `ARMeshAnchor` capture, live mesh visualization, named local
 - Runtime LiDAR / scene-reconstruction capability gate
 - Camera permission handling and ARKit world-tracking session
 - Live mesh-anchor ingestion (no simulated scan data)
+- ARKit sceneDepth + camera RGB sampling, high-confidence depth filtering and bounded 2 cm voxel accumulation across frames
+- Depth-derived colored point-cloud archives/recovery and saved RGB point rendering, with a separate mesh measurement layer
 - Local JSON project metadata and raw mesh archive persistence
 - Point-to-point measurement (metres and millimetres)
 - Saved-model measurement mode with visible A/B markers, connecting line, named saved measurements and endpoint recall
 - UTF-8 CSV measurement reports with local coordinates, metre distances and validation caveats
 - Cancellable background geometry preparation and staged model-loading feedback
 - OBJ export for captured triangles
-- ASCII PLY/XYZ export of reconstructed mesh vertices in metres (local Y-up frame, not raw LiDAR or fused depth)
+- ASCII PLY export of depth-derived points with RGB; XYZ exports coordinates only. Legacy mesh-only scans still export mesh vertices without color. Coordinates are metres, local Y-up, not georeferenced.
 - Export-format history, project rename/duplicate, and unsaved-scan discard confirmation
 - Periodic atomic recovery drafts and recovery into saved models after relaunch (last completed checkpoint only; not live AR session continuation)
 

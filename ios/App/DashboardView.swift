@@ -97,7 +97,10 @@ private struct SavedModelView: View {
     @State private var scene: SCNScene?
     @State private var errorMessage: String?
     @State private var exportURL: URL?
-    @State private var exportFormat: ScanExportFormat = .obj
+    @State private var exportFormat: ScanExportFormat = .ply
+    @State private var hasDepthCloud = false
+    @State private var hasMesh = false
+    @State private var showDepthCloud = true
     @State private var modelSummary = ""
     @State private var loading = false
     @State private var activeProjectID: UUID?
@@ -115,8 +118,18 @@ private struct SavedModelView: View {
             if let scene { MeshSceneView(scene: scene, measuring: measuring, resetID: clearMeasurement, measurement: $measurement, selectedPoints: $selectedPoints) }
             else if loading { ProgressView(loadingStage) }
             else { ContentUnavailableView("Model unavailable", systemImage: "cube") }
+            if hasDepthCloud && hasMesh {
+                Picker("View layer", selection: $showDepthCloud) {
+                    Text("Color point cloud").tag(true)
+                    Text("Mesh / measurements").tag(false)
+                }.pickerStyle(.segmented).padding(.horizontal)
+            }
+            if hasDepthCloud && showDepthCloud {
+                Text("Depth-derived color points. Switch to mesh for surface measurements.").font(.caption)
+            }
             HStack {
                 Toggle("Measure surfaces", isOn: $measuring)
+                    .disabled(!hasMesh || (hasDepthCloud && showDepthCloud))
                 Button("Clear measurement") {
                     clearMeasurement = UUID()
                     selectedPoints = []
@@ -136,7 +149,7 @@ private struct SavedModelView: View {
             Picker("Export format", selection: $exportFormat) {
                 ForEach(ScanExportFormat.allCases) { format in Text(format.label).tag(format) }
             }
-            Text("Metres • local Y-up coordinates • PLY/XYZ use mesh vertices, not raw LiDAR").font(.caption).foregroundStyle(.secondary)
+            Text(hasDepthCloud ? "Metres • Y-up • PLY: depth points + RGB • XYZ: coordinates • OBJ: mesh" : "Metres • Y-up • legacy mesh-vertex PLY/XYZ (no RGB)").font(.caption).foregroundStyle(.secondary)
             HStack {
                 Button("Export \(exportFormat.rawValue)") {
                     exportURL = nil
@@ -148,7 +161,7 @@ private struct SavedModelView: View {
                             if activeProjectID == id { exportURL = url }
                         } catch { if activeProjectID == id { errorMessage = error.localizedDescription } }
                     }
-                }.disabled(scene == nil || library.isBusy)
+                }.disabled(scene == nil || library.isBusy || (exportFormat == .obj && !hasMesh))
                 if let exportURL { ShareLink("Share \(exportURL.pathExtension.uppercased())", item: exportURL) }
             }.padding()
         }
@@ -163,6 +176,8 @@ private struct SavedModelView: View {
             showingMeasurements = false
             namingMeasurement = false
             scene = nil
+            hasDepthCloud = false
+            hasMesh = false
             exportURL = nil
             errorMessage = nil
             modelSummary = ""
@@ -178,12 +193,23 @@ private struct SavedModelView: View {
                 try Task.checkCancellation()
                 let builtScene = try await buildScene(prepared)
                 try Task.checkCancellation()
+                hasDepthCloud = samples.contains { $0.depthSource != nil && !$0.vertices.isEmpty }
+                hasMesh = samples.contains { !$0.triangles.isEmpty }
+                showDepthCloud = hasDepthCloud
                 scene = builtScene
-                modelSummary = "\(samples.reduce(0) { $0 + $1.vertices.count }) vertices • \(samples.reduce(0) { $0 + $1.triangles.count }) triangles"
+                updateVisibleLayer()
+                modelSummary = "\(samples.filter { $0.depthSource != nil }.reduce(0) { $0 + $1.vertices.count }) depth points • \(samples.reduce(0) { $0 + $1.triangles.count }) mesh triangles"
             }
             catch is CancellationError { return }
             catch { if !Task.isCancelled { errorMessage = error.localizedDescription } }
             if !Task.isCancelled { loading = false }
+        }
+        .onChange(of: showDepthCloud) { _, _ in
+            measuring = false
+            selectedPoints = []
+            clearMeasurement = UUID()
+            measurement = "Drag to orbit; pinch to zoom. Measurements use mesh surfaces."
+            updateVisibleLayer()
         }
         .onDisappear { activeProjectID = nil }
         .alert("Name measurement", isPresented: $namingMeasurement) {
@@ -212,6 +238,14 @@ private struct SavedModelView: View {
     }
 
     @MainActor
+    private func updateVisibleLayer() {
+        for node in scene?.rootNode.childNodes ?? [] {
+            if node.name == "depthCloud" { node.isHidden = !showDepthCloud }
+            if node.name == "mesh" { node.isHidden = hasDepthCloud && showDepthCloud }
+        }
+    }
+
+    @MainActor
     private func buildScene(_ meshes: [PreparedMesh]) async throws -> SCNScene {
         let scene = SCNScene()
         for (index, mesh) in meshes.enumerated() {
@@ -219,14 +253,29 @@ private struct SavedModelView: View {
             loadingStage = "Creating model \(index + 1) / \(meshes.count)…"
             let source = SCNGeometrySource(data: mesh.positions, semantic: .vertex, vectorCount: mesh.vertexCount,
                                            usesFloatComponents: true, componentsPerVector: 3, bytesPerComponent: 4, dataOffset: 0, dataStride: 12)
-            let element = SCNGeometryElement(data: mesh.indices, primitiveType: .triangles, primitiveCount: mesh.triangleCount, bytesPerIndex: 4)
-            let geometry = SCNGeometry(sources: [source], elements: [element])
+            let isCloud = mesh.triangleCount == 0
+            // nil index data means sequential vertices for a point primitive.
+            let element = SCNGeometryElement(data: isCloud ? nil : mesh.indices, primitiveType: isCloud ? .point : .triangles,
+                                             primitiveCount: isCloud ? mesh.vertexCount : mesh.triangleCount, bytesPerIndex: 4)
+            if isCloud {
+                element.pointSize = 0.015
+                element.minimumPointScreenSpaceRadius = 1
+                element.maximumPointScreenSpaceRadius = 4
+            }
+            var sources = [source]
+            if let colors = mesh.colors {
+                sources.append(SCNGeometrySource(data: colors, semantic: .color, vectorCount: mesh.vertexCount,
+                                                 usesFloatComponents: true, componentsPerVector: 3, bytesPerComponent: 4, dataOffset: 0, dataStride: 12))
+            }
+            let geometry = SCNGeometry(sources: sources, elements: [element])
             let material = SCNMaterial()
-            material.diffuse.contents = UIColor.systemOrange
+            material.diffuse.contents = isCloud ? UIColor.white : UIColor.systemOrange
+            if isCloud { material.lightingModel = .constant }
             material.isDoubleSided = true
             geometry.materials = [material]
             let node = SCNNode(geometry: geometry)
-            node.categoryBitMask = 1
+            node.name = isCloud ? "depthCloud" : "mesh"
+            node.categoryBitMask = isCloud ? 4 : 1
             scene.rootNode.addChildNode(node)
             await Task.yield()
         }

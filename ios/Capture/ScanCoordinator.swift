@@ -2,13 +2,21 @@ import ARKit
 import Combine
 import RealityKit
 import AVFoundation
+import CoreVideo
 
 @MainActor
 final class ScanCoordinator: NSObject, ObservableObject, ARSessionDelegate {
     @Published var status = "Preparing LiDAR"
-    @Published var isSupported = ARWorldTrackingConfiguration.supportsSceneReconstruction(.mesh)
+    @Published var isSupported = ARWorldTrackingConfiguration.supportsSceneReconstruction(.mesh) && ARWorldTrackingConfiguration.supportsFrameSemantics(.sceneDepth)
     @Published private(set) var meshCount = 0
     @Published private(set) var vertexCount = 0
+    @Published private(set) var pointCount = 0
+    @Published private(set) var depthFrameCount = 0
+    @Published private(set) var depthStatus = "Waiting for high-confidence LiDAR depth"
+    var hasCapture: Bool { meshCount > 0 || pointCount > 0 || depthTask != nil }
+    private let depthStore = DepthFusionStore()
+    private var depthTask: Task<Void, Never>?
+    private var lastDepthTimestamp: TimeInterval = -.infinity
     @Published private(set) var isScanning = false
     private var triangleCount = 0
     private var closed = false
@@ -51,9 +59,10 @@ final class ScanCoordinator: NSObject, ObservableObject, ARSessionDelegate {
               ProcessInfo.processInfo.thermalState != .critical else {
             pause(reason: "Device too warm. Let it cool before resuming."); return
         }
-        guard isSupported else { status = "This device does not support LiDAR mesh reconstruction."; return }
+        guard isSupported else { status = "This device does not support LiDAR scene depth and mesh reconstruction."; return }
         let configuration = ARWorldTrackingConfiguration()
         configuration.sceneReconstruction = .mesh
+        configuration.frameSemantics.insert(.sceneDepth)
         configuration.environmentTexturing = .automatic
         arView.session.delegate = self
         arView.session.delegateQueue = .main
@@ -82,8 +91,13 @@ final class ScanCoordinator: NSObject, ObservableObject, ARSessionDelegate {
         capacityReached = true
         pause(reason: "Memory pressure. Save this scan and start a smaller scan.")
     }
-    func archive() throws -> Data { try JSONEncoder().encode(Array(samples.values)) }
-    func snapshot() -> [MeshSample] { Array(samples.values) }
+    func snapshot() async -> [MeshSample] {
+        // Finish the one accepted frame before saving; never retain ARFrame/pixel buffers in a Task.
+        await depthTask?.value
+        let meshes = Array(samples.values)
+        if let cloud = await depthStore.snapshot() { return meshes + [cloud] }
+        return meshes
+    }
     private var firstMeasurementPoint: SIMD3<Float>?
 
     func markMeasurementPoint() {
@@ -106,6 +120,29 @@ final class ScanCoordinator: NSObject, ObservableObject, ARSessionDelegate {
     }
 
     nonisolated func session(_ session: ARSession, didAdd anchors: [ARAnchor]) { ingest(anchors) }
+    nonisolated func session(_ session: ARSession, didUpdate frame: ARFrame) {
+        MainActor.assumeIsolated {
+            guard isScanning, depthTask == nil, frame.timestamp - lastDepthTimestamp >= 0.2 else { return }
+            guard case .normal = frame.camera.trackingState else {
+                depthStatus = "Depth paused until tracking is normal"; return
+            }
+            lastDepthTimestamp = frame.timestamp
+            guard let sample = DepthFrameSampler.sample(frame) else {
+                depthStatus = "No supported depth/confidence/color frame yet"; return
+            }
+            depthTask = Task {
+                let result = await depthStore.integrate(sample)
+                depthTask = nil
+                guard !closed else { return }
+                pointCount = result.count; depthFrameCount = result.frames
+                depthStatus = result.count > 0 ? "Depth + RGB • 2 cm voxels • high confidence only" : "Aim at a nearby textured surface (0.2–5 m)"
+                if result.full {
+                    capacityReached = true
+                    pause(reason: "Point-cloud limit reached (200000). Save and start another scan.")
+                }
+            }
+        }
+    }
     nonisolated func session(_ session: ARSession, didUpdate anchors: [ARAnchor]) { ingest(anchors) }
     nonisolated func session(_ session: ARSession, didRemove anchors: [ARAnchor]) {
         let ids = anchors.map(\.identifier)
@@ -165,6 +202,60 @@ final class ScanCoordinator: NSObject, ObservableObject, ARSessionDelegate {
             }
             meshCount = samples.count
         }
+    }
+}
+
+/// Copies a small, bounded sample while ARKit owns the frame. Buffer row padding is respected.
+private enum DepthFrameSampler {
+    static func sample(_ frame: ARFrame) -> DepthFrameSample? {
+        guard let depth = frame.sceneDepth, let confidence = depth.confidenceMap else { return nil }
+        let map = depth.depthMap, color = frame.capturedImage
+        let width = CVPixelBufferGetWidth(map), height = CVPixelBufferGetHeight(map)
+        let colorFormat = CVPixelBufferGetPixelFormatType(color)
+        guard CVPixelBufferGetPixelFormatType(map) == kCVPixelFormatType_DepthFloat32,
+              CVPixelBufferGetPixelFormatType(confidence) == kCVPixelFormatType_OneComponent8,
+              width > 0, height > 0, width <= 2048, height <= 2048,
+              ((width + 3) / 4) * ((height + 3) / 4) <= 20_000,
+              CVPixelBufferGetWidth(confidence) == width, CVPixelBufferGetHeight(confidence) == height,
+              CVPixelBufferGetPlaneCount(color) == 2,
+              colorFormat == kCVPixelFormatType_420YpCbCr8BiPlanarFullRange || colorFormat == kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange else { return nil }
+        guard CVPixelBufferLockBaseAddress(map, .readOnly) == kCVReturnSuccess else { return nil }
+        defer { CVPixelBufferUnlockBaseAddress(map, .readOnly) }
+        guard CVPixelBufferLockBaseAddress(confidence, .readOnly) == kCVReturnSuccess else { return nil }
+        defer { CVPixelBufferUnlockBaseAddress(confidence, .readOnly) }
+        guard CVPixelBufferLockBaseAddress(color, .readOnly) == kCVReturnSuccess else { return nil }
+        defer { CVPixelBufferUnlockBaseAddress(color, .readOnly) }
+        guard let depthBase = CVPixelBufferGetBaseAddress(map), let confidenceBase = CVPixelBufferGetBaseAddress(confidence),
+              let yBase = CVPixelBufferGetBaseAddressOfPlane(color, 0), let uvBase = CVPixelBufferGetBaseAddressOfPlane(color, 1) else { return nil }
+        let depthStride = CVPixelBufferGetBytesPerRow(map), confidenceStride = CVPixelBufferGetBytesPerRow(confidence)
+        let yStride = CVPixelBufferGetBytesPerRowOfPlane(color, 0), uvStride = CVPixelBufferGetBytesPerRowOfPlane(color, 1)
+        let yw = CVPixelBufferGetWidthOfPlane(color, 0), yh = CVPixelBufferGetHeightOfPlane(color, 0)
+        let uvw = CVPixelBufferGetWidthOfPlane(color, 1), uvh = CVPixelBufferGetHeightOfPlane(color, 1)
+        guard yw > 0, yh > 0, uvw > 0, uvh > 0,
+              depthStride >= width * 4, confidenceStride >= width, yStride >= yw, uvStride >= uvw * 2 else { return nil }
+        var pixels: [DepthPixel] = []
+        pixels.reserveCapacity(((width + 3) / 4) * ((height + 3) / 4))
+        for y in stride(from: 0, to: height, by: 4) {
+            let depths = depthBase.advanced(by: y * depthStride).assumingMemoryBound(to: Float.self)
+            let confidences = confidenceBase.advanced(by: y * confidenceStride).assumingMemoryBound(to: UInt8.self)
+            for x in stride(from: 0, to: width, by: 4) {
+                let z = depths[x]
+                guard confidences[x] == 2, z.isFinite, z >= 0.2, z <= 5 else { continue }
+                // Native sensor coordinates, not screen/display orientation.
+                let px = min(yw - 1, x * yw / width), py = min(yh - 1, y * yh / height)
+                let ux = min(uvw - 1, x * uvw / width), uy = min(uvh - 1, y * uvh / height)
+                let luma = yBase.advanced(by: py * yStride + px).assumingMemoryBound(to: UInt8.self).pointee
+                let chroma = uvBase.advanced(by: uy * uvStride + ux * 2).assumingMemoryBound(to: UInt8.self)
+                let rgb = PointRGB.yCbCr(y: luma, cb: chroma[0], cr: chroma[1], videoRange: colorFormat == kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange)
+                pixels.append(DepthPixel(x: Float(x), y: Float(y), depth: z, confidence: confidences[x], color: rgb))
+            }
+        }
+        let resolution = frame.camera.imageResolution, intrinsics = frame.camera.intrinsics
+        guard resolution.width > 0, resolution.height > 0 else { return nil }
+        let sx = Float(width) / Float(resolution.width), sy = Float(height) / Float(resolution.height)
+        return DepthFrameSample(fx: intrinsics.columns.0.x * sx, fy: intrinsics.columns.1.y * sy,
+                                cx: intrinsics.columns.2.x * sx, cy: intrinsics.columns.2.y * sy,
+                                cameraToWorld: Matrix4x4(frame.camera.transform), pixels: pixels)
     }
 }
 
