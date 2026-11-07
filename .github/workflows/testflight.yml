@@ -1,0 +1,109 @@
+name: Signed iPad build and TestFlight
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: 'Build only, or explicitly upload to TestFlight'
+        type: choice
+        options: [build-only, testflight]
+        default: build-only
+      expected_sha:
+        description: 'Full 40-character main commit SHA reviewed for this release'
+        required: true
+        type: string
+      authorize_signing:
+        description: 'Authorize use of signing credentials for this commit'
+        type: boolean
+        default: false
+      app_version:
+        description: 'Marketing version, e.g. 0.2.0'
+        required: true
+        default: '0.2.0'
+        type: string
+      build_number:
+        description: 'Unused increasing CFBundleVersion, e.g. 3 (new number on every upload/retry)'
+        required: true
+        type: string
+      upload_confirmation:
+        description: 'For upload only, type UPLOAD_TO_TESTFLIGHT'
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ios-distribution
+  cancel-in-progress: false
+
+env:
+  DEVELOPER_DIR: /Applications/Xcode_26.2.app/Contents/Developer
+
+jobs:
+  verify:
+    if: github.ref == 'refs/heads/main' && inputs.authorize_signing && inputs.expected_sha == github.sha
+    runs-on: macos-15
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - name: Verify same commit without Apple credentials
+        run: |
+          xcodebuild -version
+          python3 -m unittest discover -s tests/distribution -v
+          swift test
+          xcodebuild build -project ios/3117LiDARScan.xcodeproj -scheme LiDARScan -configuration Debug -destination 'generic/platform=iOS Simulator' -derivedDataPath build/simulator CODE_SIGNING_ALLOWED=NO
+          xcodebuild build -project ios/3117LiDARScan.xcodeproj -scheme LiDARScan -configuration Release -destination 'generic/platform=iOS' -derivedDataPath build/device CODE_SIGNING_ALLOWED=NO
+
+  distribute:
+    needs: verify
+    runs-on: macos-15
+    timeout-minutes: 45
+    # Configure required reviewers + main-only branch policy BEFORE adding secrets.
+    environment: ios-distribution
+    env:
+      DISTRIBUTION_MODE: ${{ inputs.mode }}
+      EXPECTED_SHA: ${{ inputs.expected_sha }}
+      AUTHORIZE_SIGNING: ${{ inputs.authorize_signing }}
+      UPLOAD_CONFIRMATION: ${{ inputs.upload_confirmation }}
+      APP_VERSION: ${{ inputs.app_version }}
+      BUILD_NUMBER: ${{ inputs.build_number }}
+      APPLE_TEAM_ID: ${{ vars.APPLE_TEAM_ID }}
+      APP_BUNDLE_ID: ${{ vars.APP_BUNDLE_ID }}
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - name: Sign, archive, export and verify IPA
+        env:
+          IOS_DISTRIBUTION_P12_BASE64: ${{ secrets.IOS_DISTRIBUTION_P12_BASE64 }}
+          IOS_DISTRIBUTION_P12_PASSWORD: ${{ secrets.IOS_DISTRIBUTION_P12_PASSWORD }}
+          IOS_APP_STORE_PROFILE_BASE64: ${{ secrets.IOS_APP_STORE_PROFILE_BASE64 }}
+          ASC_KEY_ID: ${{ inputs.mode == 'testflight' && secrets.ASC_KEY_ID || '' }}
+          ASC_ISSUER_ID: ${{ inputs.mode == 'testflight' && secrets.ASC_ISSUER_ID || '' }}
+          ASC_PRIVATE_KEY: ${{ inputs.mode == 'testflight' && secrets.ASC_PRIVATE_KEY || '' }}
+        run: bash scripts/distribution/sign.sh
+      - name: Upload only when explicitly authorized
+        if: inputs.mode == 'testflight' && inputs.upload_confirmation == 'UPLOAD_TO_TESTFLIGHT'
+        env:
+          IOS_DISTRIBUTION_P12_BASE64: ${{ secrets.IOS_DISTRIBUTION_P12_BASE64 }}
+          IOS_DISTRIBUTION_P12_PASSWORD: ${{ secrets.IOS_DISTRIBUTION_P12_PASSWORD }}
+          IOS_APP_STORE_PROFILE_BASE64: ${{ secrets.IOS_APP_STORE_PROFILE_BASE64 }}
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          ASC_PRIVATE_KEY: ${{ secrets.ASC_PRIVATE_KEY }}
+        run: bash scripts/distribution/upload.sh
+      - name: Remove temporary signing material
+        if: always()
+        run: bash scripts/distribution/cleanup.sh
+      - name: Retain IPA and non-secret evidence
+        if: success()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: signed-ipad-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            build/distribution/LiDARScan.ipa
+            build/distribution/evidence.json
+          retention-days: 1
+          if-no-files-found: error

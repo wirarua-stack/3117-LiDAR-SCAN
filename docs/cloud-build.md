@@ -12,14 +12,14 @@ The repository includes `.github/workflows/macos-build.yml` for GitHub Actions. 
 
 This workflow requires no Apple signing secrets and uploads only diagnostics. It does not install an application on iPad, exercise LiDAR, produce a signed IPA, or upload to TestFlight. Simulator compilation checks source compatibility, not sensor behavior.
 
-The runner label is fixed, but its default Xcode installation can change as GitHub updates the image. Check the recorded toolchain before comparing runs; pin a verified installed Xcode version after the first successful run if strict reproducibility is required.
+The runner label and Xcode 26.2 path are fixed. If that Xcode installation is removed from GitHub's runner image, CI must fail rather than silently change toolchain. Update both build workflows together after verification.
 
-## Next gate: TestFlight
+## TestFlight distribution
 
-After compile verification, configure the owner's Apple Developer Program membership, App Store Connect app record, confirmed bundle identifier, signing certificate/provisioning, unique build number and required app assets. Store credentials in the CI secret store, never in the repository or chat. Add a separate manually triggered distribution workflow after these settings are available. Compilation success alone does not establish TestFlight readiness or physical-device acceptance.
+See [TestFlight setup and iPad-only operation](testflight.md) for the separate manual-only signed build/upload workflow, exact environment secret names, required approvals and device evidence checklist. Unsigned CI and distribution now select Xcode 26.2 explicitly. Signing and upload remain unverified until the owner configures credentials and authorizes a run.
 
 ## Current evidence
 
-The private repository is now connected at `https://github.com/wirarua-stack/3117-LiDAR-SCAN`. On 2026-10-14, [run 38499242569](https://github.com/wirarua-stack/3117-LiDAR-SCAN/actions/runs/38499242569) succeeded for commit `549c1cb2b8cba8fd0aa2a36397182aee7c6951a3`, using Xcode 16.4 and the iOS 18.5 SDK. All five package tests passed, as did Simulator Debug and unsigned iPad Release compilation. Diagnostic artifact: `build-logs-38499242569-1` (14-day retention). No signing or physical-device test was performed.
+The repository is connected at `https://github.com/wirarua-stack/3117-LiDAR-SCAN`. On 2026-10-14, [run 38499242569](https://github.com/wirarua-stack/3117-LiDAR-SCAN/actions/runs/38499242569) succeeded for commit `549c1cb2b8cba8fd0aa2a36397182aee7c6951a3`, using Xcode 16.4 and the iOS 18.5 SDK. All five package tests passed, as did Simulator Debug and unsigned iPad Release compilation. Diagnostic artifact: `build-logs-38499242569-1` (14-day retention). No signing or physical-device test was performed.
 
 References: [GitHub-hosted runners](https://docs.github.com/en/actions/reference/runners/github-hosted-runners), [workflow artifacts](https://docs.github.com/en/actions/tutorials/store-and-share-data).

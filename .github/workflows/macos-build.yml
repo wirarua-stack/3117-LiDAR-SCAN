@@ -12,6 +12,9 @@ concurrency:
   group: macos-build-${{ github.ref }}
   cancel-in-progress: true
 
+env:
+  DEVELOPER_DIR: /Applications/Xcode_26.2.app/Contents/Developer
+
 jobs:
   verify:
     runs-on: macos-15
@@ -31,6 +34,8 @@ jobs:
           plutil -lint ios/App/Info.plist
           plutil -lint ios/3117LiDARScan.xcodeproj/project.pbxproj
           xcodebuild -list -project ios/3117LiDARScan.xcodeproj
+      - name: Distribution safety tests
+        run: python3 -m unittest discover -s tests/distribution -v
       - name: Geometry and export unit tests
         run: |
           set -o pipefail

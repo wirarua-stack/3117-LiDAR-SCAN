@@ -17,3 +17,6 @@ DerivedData/
 *.cer
 *.xcarchive/
 web/
+
+__pycache__/
+*.pyc
