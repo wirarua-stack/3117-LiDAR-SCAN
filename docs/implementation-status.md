@@ -1,4 +1,6 @@
-# Implementation status — 2026-10-15
+# Implementation status — 2026-11-07
+
+Distribution source update: a manual-only signed iPad archive/export and explicitly confirmed TestFlight upload workflow has been added, with exact-commit authorization, protected-environment integration, temporary keychain cleanup, profile/IPA validation, App Icon assets and configurable version/build numbers. Xcode 26.2 is selected for both CI and distribution. See [owner setup and evidence gates](testflight.md). Apple account settings, environment protections/secrets, signed builds, TestFlight processing, installation and physical scanning remain unverified. Historical build evidence below applies only to the named commits.
 
 Depth/RGB verification: [macOS run 38682410041](https://github.com/wirarua-stack/3117-LiDAR-SCAN/actions/runs/38682410041) succeeded for `8a07b5725a21c35478e02e47f502cedac091578c`, including the geometry/export unit-test suite, Simulator Debug compilation and unsigned iPad Release compilation. [Browser regression run 38682410119](https://github.com/wirarua-stack/3117-LiDAR-SCAN/actions/runs/38682410119) also passed. This verifies tested synthetic behaviors and compilation, not live sensor capture, visual rendering, signing or physical-device accuracy.
 
